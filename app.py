@@ -56,7 +56,7 @@ def load_inceptionv3_model():
     )
 
     try:
-        model.load_weights("/Users/macbook/Projects/catfish-attribute-prediction/InceptionV3_best_model.weights.h5")
+        model.load_weights("InceptionV3_best_model.weights.h5")
     except Exception as e:
         st.error(f"Error loading model weights: {e}")
         st.stop()
@@ -100,12 +100,12 @@ if image_source == "Upload Image":
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
     if uploaded_file is not None:
         image_file = uploaded_file
-        st.image(image_file, caption="Uploaded Image.", use_column_width=True)
+        st.image(image_file, caption="Uploaded Image.", use_container_width=True)
 elif image_source == "Capture from Webcam":
     camera_input = st.camera_input("Take a picture")
     if camera_input is not None:
         image_file = camera_input
-        st.image(image_file, caption="Captured Image.", use_column_width=True)
+        st.image(image_file, caption="Captured Image.", use_container_width=True)
 
 # Process the image if available
 if image_file is not None:
