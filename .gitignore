@@ -21,12 +21,6 @@ build/
 .vscode/
 .idea/
 
-# Model weights
-*.h5
-*.weights
-*.model
-*.pb
-
 # OS generated files
 .DS_Store
 .DS_Store?
