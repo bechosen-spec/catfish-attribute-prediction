@@ -9,40 +9,14 @@ from tensorflow.keras.layers import Input, Flatten, Dense
 from tensorflow.keras.applications import InceptionV3
 from tensorflow.keras import backend as K
 
-# Set background image for the entire app
-st.markdown(
-    """
-    <style>
-    .reportview-container {
-        background-image: url('/home/oem/catfish-attribute-prediction/assets/background_image.png');  /* Replace with your own image URL */
-        background-size: cover;
-        background-repeat: no-repeat;
-        background-position: center center;
-        height: 100vh;
-    }
-    .section-header {
-        background-image: url('/home/oem/catfish-attribute-prediction/assets/background_image.png');
-        background-size: cover;
-        background-repeat: no-repeat;
-        background-position: center center;
-        padding: 100px 0;
-        color: white;
-        text-align: center;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# Get the absolute path to the assets directory
+assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+logo_path = os.path.join(assets_dir, 'logo.jpeg')
 
-# Display the logo at the top of the app
-st.markdown(
-    """
-    <div style="text-align: center;">
-        <img src="/home/oem/catfish-attribute-prediction/assets/logo.png" width="200" height="200">
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# Center align the logo with columns
+col1, col2, col3 = st.columns([1,2,1])
+with col2:
+    st.image(logo_path, width=300, use_container_width=True)
 
 # Define the input shape for the model
 input_shape = (224, 224, 3)
@@ -82,7 +56,7 @@ def load_inceptionv3_model():
     )
 
     try:
-        model.load_weights("/home/oem/catfish-attribute-prediction/InceptionV3_best_model.weights.h5")
+        model.load_weights("/Users/macbook/Projects/catfish-attribute-prediction/InceptionV3_best_model.weights.h5")
     except Exception as e:
         st.error(f"Error loading model weights: {e}")
         st.stop()
