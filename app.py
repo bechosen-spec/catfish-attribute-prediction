@@ -19,7 +19,7 @@ with col2:
     st.image(logo_path, width=300, use_container_width=True)
 
 # Define the input shape for the model
-input_shape = (229, 229, 3)
+input_shape = (299, 299, 3)
 
 # Clear the session before loading the model to prevent internal TensorFlow issues
 K.clear_session()
