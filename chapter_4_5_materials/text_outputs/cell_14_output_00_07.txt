@@ -1,0 +1,4 @@
+
+ train images 249 fish 81
+images/class {'juvenile': 102, 'adult': 74, 'fingerling': 73}
+fish/class {'adult': 23, 'fingerling': 24, 'juvenile': 34}

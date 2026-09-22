@@ -1,0 +1,24 @@
+{
+  "fingerling": {
+    "predicted_growth_stage": "fingerling",
+    "confidence": 0.8738613129,
+    "standard_length_cm": 14.9930458069,
+    "total_length_cm": 19.3078174591,
+    "weight_g": 337.6943359375
+  },
+  "juvenile": {
+    "predicted_growth_stage": "juvenile",
+    "confidence": 0.8987919092,
+    "standard_length_cm": 11.2256498337,
+    "total_length_cm": 23.2756996155,
+    "weight_g": 317.5202026367
+  },
+  "adult": {
+    "predicted_growth_stage": "adult",
+    "confidence": 0.9999995232,
+    "standard_length_cm": 46.6437034607,
+    "total_length_cm": 37.9500656128,
+    "weight_g": 706.9700927734,
+    "warning": "Estimated total length is smaller than standard length; direct measurement is required."
+  }
+}

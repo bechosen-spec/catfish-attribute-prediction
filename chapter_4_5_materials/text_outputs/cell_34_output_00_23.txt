@@ -1,0 +1,4 @@
+Saved-model reload verified on three test images.
+{'predicted_class': 'Juvenile', 'class_label': 1, 'confidence': 0.5608577132225037, 'class_probabilities': {'Fingerling': 0.10182330757379532, 'Juvenile': 0.5608577132225037, 'Adult': 0.33731895685195923}, 'SL_cm': 23.41643714904785, 'TL_cm': 25.919967651367188, 'Weight_g': 76.10893249511719}
+{'predicted_class': 'Adult', 'class_label': 2, 'confidence': 0.5148541927337646, 'class_probabilities': {'Fingerling': 0.11228624731302261, 'Juvenile': 0.37285956740379333, 'Adult': 0.5148541927337646}, 'SL_cm': 25.354400634765625, 'TL_cm': 27.787893295288086, 'Weight_g': 109.33916473388672}
+{'predicted_class': 'Adult', 'class_label': 2, 'confidence': 0.8213359713554382, 'class_probabilities': {'Fingerling': 0.06557513028383255, 'Juvenile': 0.11308897286653519, 'Adult': 0.8213359713554382}, 'SL_cm': 23.88394546508789, 'TL_cm': 29.09282112121582, 'Weight_g': 127.24241638183594}

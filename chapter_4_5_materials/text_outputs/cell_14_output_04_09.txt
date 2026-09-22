@@ -1,0 +1,4 @@
+
+ test images 57 fish 19
+images/class {'juvenile': 24, 'fingerling': 18, 'adult': 15}
+fish/class {'adult': 5, 'fingerling': 6, 'juvenile': 8}

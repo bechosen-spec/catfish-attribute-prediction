@@ -1,0 +1,3433 @@
+<!doctype html><html><head><meta charset='utf-8'>
+<title>Catfish notebook saved results</title>
+<style>body{max-width:1100px;margin:2rem auto;padding:0 1rem;font:16px/1.55 system-ui;color:#172b36}pre{white-space:pre-wrap;background:#f4f7f8;padding:1rem;border-radius:8px;overflow:auto}img{max-width:100%;height:auto;border:1px solid #ddd}table{border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid #ccc;padding:.4rem}.cell{border-top:2px solid #dce7ea;padding-top:1rem;margin-top:2rem}.output{margin:1rem 0;padding-left:1rem;border-left:4px solid #5aa}</style></head><body>
+<h1>Catfish multi-task notebook — saved results</h1>
+<p>This static report was extracted from the notebook without executing any cells.</p>
+<section class='cell'><h2>Cell 0 — markdown</h2>
+<pre># Catfish Multi-task Computer Vision — Google Colab
+
+End-to-end, fish-grouped pipeline for growth-stage classification and SL/TL/weight regression. **357 image views are not 357 independent animals**: every split and confidence interval treats `fish_id` as the experimental unit.
+
+Run once with `QUICK_MODE=True`. After it succeeds, set it to `False` for the controlled experiments. Use **Runtime → Change runtime type → T4 GPU**.</pre>
+</section>
+<section class='cell'><h2>Cell 1 — markdown</h2>
+<pre>## 1. Colab setup and configuration</pre>
+</section>
+<section class='cell'><h2>Cell 2 — code</h2>
+<details><summary>Code</summary><pre>import os, sys, subprocess, importlib.util
+required = {&quot;openpyxl&quot;:&quot;openpyxl&quot;, &quot;sklearn&quot;:&quot;scikit-learn&quot;, &quot;imblearn&quot;:&quot;imbalanced-learn&quot;, &quot;joblib&quot;:&quot;joblib&quot;, &quot;cv2&quot;:&quot;opencv-python-headless&quot;, &quot;seaborn&quot;:&quot;seaborn&quot;}
+missing = [pkg for mod,pkg in required.items() if importlib.util.find_spec(mod) is None]
+if missing:
+    subprocess.check_call([sys.executable,&quot;-m&quot;,&quot;pip&quot;,&quot;install&quot;,&quot;-q&quot;,*missing])
+
+import gc, json, time, random, shutil, hashlib, warnings, zipfile
+from pathlib import Path
+import numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns
+from PIL import Image, UnidentifiedImageError
+import cv2, joblib, tensorflow as tf
+from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (accuracy_score, balanced_accuracy_score, precision_recall_fscore_support,
+    classification_report, confusion_matrix, roc_auc_score, roc_curve, precision_recall_curve,
+    average_precision_score, mean_absolute_error, mean_squared_error, r2_score)
+
+QUICK_MODE = True
+USE_GOOGLE_DRIVE = False
+RESUME_FROM_CHECKPOINT = True
+DEBUG_MODEL_LAYERS = False
+RUN_CROPPING_EXPERIMENT = True
+RUN_ALTERNATIVE_BACKBONE = True
+RUN_REGRESSION = True
+RUN_MULTITASK = True
+RUN_CROSS_VALIDATION = False
+RUN_GRADCAM = True
+SEED, IMAGE_SIZE, BATCH_SIZE = 42, 224, 16
+HEAD_EPOCHS = 2 if QUICK_MODE else 12
+FINE_EPOCHS = 1 if QUICK_MODE else 10
+CV_FOLDS = 3
+CLASS_NAMES = [&quot;Fingerling&quot;,&quot;Juvenile&quot;,&quot;Adult&quot;]
+CLASS_MAPPING = {n:i for i,n in enumerate(CLASS_NAMES)}
+ROOT=Path(&quot;/content&quot;); OUTPUTS=ROOT/&quot;outputs&quot;
+for d in [&quot;data&quot;,&quot;models&quot;,&quot;reports&quot;,&quot;figures&quot;,&quot;predictions&quot;,&quot;histories&quot;,&quot;explainability&quot;,&quot;scalers&quot;,&quot;crops&quot;]:
+    (OUTPUTS/d).mkdir(parents=True,exist_ok=True)
+random.seed(SEED); np.random.seed(SEED); tf.keras.utils.set_random_seed(SEED)
+try: tf.config.experimental.enable_op_determinism()
+except Exception: pass
+gpus=tf.config.list_physical_devices(&quot;GPU&quot;)
+if gpus:
+    try: tf.keras.mixed_precision.set_global_policy(&quot;mixed_float16&quot;)
+    except Exception as e: print(&quot;Mixed precision unavailable:&quot;,e)
+print(&quot;Python:&quot;,sys.version); print(&quot;TensorFlow:&quot;,tf.__version__); print(&quot;Devices:&quot;,tf.config.list_physical_devices())
+print(&quot;GPU:&quot;,gpus[0].name if gpus else &quot;None (CPU runtime)&quot;,&quot;| policy:&quot;,tf.keras.mixed_precision.global_policy())
+if USE_GOOGLE_DRIVE:
+    from google.colab import drive
+    drive.mount(&quot;/content/drive&quot;)
+</pre></details>
+<div class='output'>
+<pre>Python: 3.12.13 (main, Mar  4 2026, 09:23:07) [GCC 11.4.0]
+TensorFlow: 2.20.0
+Devices: [PhysicalDevice(name=&#x27;/physical_device:CPU:0&#x27;, device_type=&#x27;CPU&#x27;), PhysicalDevice(name=&#x27;/physical_device:GPU:0&#x27;, device_type=&#x27;GPU&#x27;)]
+GPU: /physical_device:GPU:0 | policy: &lt;DTypePolicy &quot;mixed_float16&quot;&gt;
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 3 — markdown</h2>
+<pre>## 2. Upload the four source files</pre>
+</section>
+<section class='cell'><h2>Cell 4 — code</h2>
+<details><summary>Code</summary><pre>EXPECTED={&quot;catfish_dataset.zip&quot;,&quot;adult.xlsx&quot;,&quot;juvenile.xlsx&quot;,&quot;fingerling.xlsx&quot;}
+if USE_GOOGLE_DRIVE:
+    DRIVE_INPUT=Path(&quot;/content/drive/MyDrive/catfish_inputs&quot;)
+    for name in EXPECTED:
+        src=DRIVE_INPUT/name
+        if src.exists(): shutil.copy2(src,ROOT/name)
+else:
+    from google.colab import files
+    print(&quot;Upload:&quot;,sorted(EXPECTED)); uploaded=files.upload()
+missing=sorted(name for name in EXPECTED if not (ROOT/name).is_file())
+if missing: raise FileNotFoundError(f&quot;Missing required upload(s): {missing}&quot;)
+print(&quot;All required files are present.&quot;)
+</pre></details>
+<div class='output'>
+<pre>Upload: [&#x27;adult.xlsx&#x27;, &#x27;catfish_dataset.zip&#x27;, &#x27;fingerling.xlsx&#x27;, &#x27;juvenile.xlsx&#x27;]
+</pre>
+</div>
+<div class='output'>
+
+     <input type="file" id="files-79ec5ddd-52b2-45dd-99ed-f0559135f0a1" name="files[]" multiple disabled
+        style="border:none" />
+     <output id="result-79ec5ddd-52b2-45dd-99ed-f0559135f0a1">
+      Upload widget is only available when the cell has been executed in the
+      current browser session. Please rerun this cell to enable.
+      </output>
+      <script>// Copyright 2017 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Helpers for google.colab Python module.
+ */
+(function(scope) {
+function span(text, styleAttributes = {}) {
+  const element = document.createElement('span');
+  element.textContent = text;
+  for (const key of Object.keys(styleAttributes)) {
+    element.style[key] = styleAttributes[key];
+  }
+  return element;
+}
+
+// Max number of bytes which will be uploaded at a time.
+const MAX_PAYLOAD_SIZE = 100 * 1024;
+
+function _uploadFiles(inputId, outputId) {
+  const steps = uploadFilesStep(inputId, outputId);
+  const outputElement = document.getElementById(outputId);
+  // Cache steps on the outputElement to make it available for the next call
+  // to uploadFilesContinue from Python.
+  outputElement.steps = steps;
+
+  return _uploadFilesContinue(outputId);
+}
+
+// This is roughly an async generator (not supported in the browser yet),
+// where there are multiple asynchronous steps and the Python side is going
+// to poll for completion of each step.
+// This uses a Promise to block the python side on completion of each step,
+// then passes the result of the previous step as the input to the next step.
+function _uploadFilesContinue(outputId) {
+  const outputElement = document.getElementById(outputId);
+  const steps = outputElement.steps;
+
+  const next = steps.next(outputElement.lastPromiseValue);
+  return Promise.resolve(next.value.promise).then((value) => {
+    // Cache the last promise value to make it available to the next
+    // step of the generator.
+    outputElement.lastPromiseValue = value;
+    return next.value.response;
+  });
+}
+
+/**
+ * Generator function which is called between each async step of the upload
+ * process.
+ * @param {string} inputId Element ID of the input file picker element.
+ * @param {string} outputId Element ID of the output display.
+ * @return {!Iterable<!Object>} Iterable of next steps.
+ */
+function* uploadFilesStep(inputId, outputId) {
+  const inputElement = document.getElementById(inputId);
+  inputElement.disabled = false;
+
+  const outputElement = document.getElementById(outputId);
+  outputElement.innerHTML = '';
+
+  const pickedPromise = new Promise((resolve) => {
+    inputElement.addEventListener('change', (e) => {
+      resolve(e.target.files);
+    });
+  });
+
+  const cancel = document.createElement('button');
+  inputElement.parentElement.appendChild(cancel);
+  cancel.textContent = 'Cancel upload';
+  const cancelPromise = new Promise((resolve) => {
+    cancel.onclick = () => {
+      resolve(null);
+    };
+  });
+
+  // Wait for the user to pick the files.
+  const files = yield {
+    promise: Promise.race([pickedPromise, cancelPromise]),
+    response: {
+      action: 'starting',
+    }
+  };
+
+  cancel.remove();
+
+  // Disable the input element since further picks are not allowed.
+  inputElement.disabled = true;
+
+  if (!files) {
+    return {
+      response: {
+        action: 'complete',
+      }
+    };
+  }
+
+  for (const file of files) {
+    const li = document.createElement('li');
+    li.append(span(file.name, {fontWeight: 'bold'}));
+    li.append(span(
+        `(${file.type || 'n/a'}) - ${file.size} bytes, ` +
+        `last modified: ${
+            file.lastModifiedDate ? file.lastModifiedDate.toLocaleDateString() :
+                                    'n/a'} - `));
+    const percent = span('0% done');
+    li.appendChild(percent);
+
+    outputElement.appendChild(li);
+
+    const fileDataPromise = new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        resolve(e.target.result);
+      };
+      reader.readAsArrayBuffer(file);
+    });
+    // Wait for the data to be ready.
+    let fileData = yield {
+      promise: fileDataPromise,
+      response: {
+        action: 'continue',
+      }
+    };
+
+    // Use a chunked sending to avoid message size limits. See b/62115660.
+    let position = 0;
+    do {
+      const length = Math.min(fileData.byteLength - position, MAX_PAYLOAD_SIZE);
+      const chunk = new Uint8Array(fileData, position, length);
+      position += length;
+
+      const base64 = btoa(String.fromCharCode.apply(null, chunk));
+      yield {
+        response: {
+          action: 'append',
+          file: file.name,
+          data: base64,
+        },
+      };
+
+      let percentDone = fileData.byteLength === 0 ?
+          100 :
+          Math.round((position / fileData.byteLength) * 100);
+      percent.textContent = `${percentDone}% done`;
+
+    } while (position < fileData.byteLength);
+  }
+
+  // All done.
+  yield {
+    response: {
+      action: 'complete',
+    }
+  };
+}
+
+scope.google = scope.google || {};
+scope.google.colab = scope.google.colab || {};
+scope.google.colab._files = {
+  _uploadFiles,
+  _uploadFilesContinue,
+};
+})(self);
+</script> 
+</div>
+<div class='output'>
+<pre>Saving fingerling.xlsx to fingerling.xlsx
+All required files are present.
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 5 — markdown</h2>
+<pre>## 3. Extract and audit images</pre>
+</section>
+<section class='cell'><h2>Cell 6 — code</h2>
+<details><summary>Code</summary><pre>EXTRACT=ROOT/&quot;catfish_dataset&quot;
+if EXTRACT.exists(): shutil.rmtree(EXTRACT)
+EXTRACT.mkdir()
+with zipfile.ZipFile(ROOT/&quot;catfish_dataset.zip&quot;) as z:
+    bad=z.testzip()
+    if bad: raise zipfile.BadZipFile(f&quot;Corrupt ZIP member: {bad}&quot;)
+    z.extractall(EXTRACT)
+IMAGE_EXT={&quot;.jpg&quot;,&quot;.jpeg&quot;,&quot;.png&quot;,&quot;.bmp&quot;,&quot;.webp&quot;}
+all_files=[p for p in EXTRACT.rglob(&quot;*&quot;) if p.is_file()]
+image_paths=[p for p in all_files if p.suffix.lower() in IMAGE_EXT]
+unsupported=[p for p in all_files if p.suffix.lower() not in IMAGE_EXT and p.name!=&quot;.DS_Store&quot;]
+fish_dirs=sorted({p.parent for p in image_paths})
+empty_dirs=[p for p in EXTRACT.rglob(&quot;*&quot;) if p.is_dir() and not any(x.is_file() for x in p.iterdir())]
+
+def canonical_id(class_name, folder):
+    digits=&#x27;&#x27;.join(c for c in folder if c.isdigit())
+    return f&quot;{class_name.lower()}_{int(digits):03d}&quot; if digits else f&quot;{class_name.lower()}_{folder.lower().strip()}&quot;
+
+rows=[]
+for p in sorted(image_paths):
+    cls=p.parent.parent.name.strip().lower(); fish_id=canonical_id(cls,p.parent.name)
+    rec=dict(fish_id=fish_id,image_path=str(p),filename=p.name,class_name=cls,source_folder=str(p.parent),valid=False,width=np.nan,height=np.nan,sha256=&quot;&quot;,error=&quot;&quot;)
+    try:
+        raw=p.read_bytes()
+        with Image.open(p) as im: im.verify()
+        with Image.open(p) as im: rec.update(valid=True,width=im.width,height=im.height,sha256=hashlib.sha256(raw).hexdigest())
+    except Exception as e: rec[&quot;error&quot;]=repr(e)
+    rows.append(rec)
+audit_images=pd.DataFrame(rows)
+dup= audit_images[audit_images.duplicated(&quot;sha256&quot;,False)].sort_values(&quot;sha256&quot;)
+cross_fish=dup.groupby(&quot;sha256&quot;).fish_id.nunique(); cross_fish=cross_fish[cross_fish&gt;1]
+cross_class=dup.groupby(&quot;sha256&quot;).class_name.nunique(); cross_class=cross_class[cross_class&gt;1]
+audit_table=pd.DataFrame({
+ &quot;metric&quot;:[&quot;images&quot;,&quot;valid_images&quot;,&quot;corrupt_images&quot;,&quot;fish_folders&quot;,&quot;empty_folders&quot;,&quot;unsupported_files&quot;,&quot;exact_duplicate_groups&quot;,&quot;duplicates_across_fish&quot;,&quot;duplicates_across_classes&quot;],
+ &quot;value&quot;:[len(audit_images),int(audit_images.valid.sum()),int((~audit_images.valid).sum()),audit_images.fish_id.nunique(),len(empty_dirs),len(unsupported),dup.sha256.nunique(),len(cross_fish),len(cross_class)]})
+display(audit_table); display(audit_images.groupby(&quot;class_name&quot;).agg(images=(&quot;image_path&quot;,&quot;size&quot;),fish=(&quot;fish_id&quot;,&quot;nunique&quot;)))
+if (~audit_images.valid).any(): display(audit_images[~audit_images.valid]); raise ValueError(&quot;Corrupt images found&quot;)
+dup.to_csv(OUTPUTS/&quot;reports/exact_duplicates.csv&quot;,index=False); audit_table.to_csv(OUTPUTS/&quot;reports/dataset_audit.csv&quot;,index=False)
+</pre></details>
+<div class='output'>
+
+  <div id="df-d639ffe7-031a-40b6-92cf-7be2f5dec4bc" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>metric</th>
+      <th>value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>images</td>
+      <td>357</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>valid_images</td>
+      <td>357</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>corrupt_images</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>fish_folders</td>
+      <td>117</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>empty_folders</td>
+      <td>5</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>unsupported_files</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>exact_duplicate_groups</td>
+      <td>2</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>duplicates_across_fish</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>duplicates_across_classes</td>
+      <td>0</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-d639ffe7-031a-40b6-92cf-7be2f5dec4bc')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-d639ffe7-031a-40b6-92cf-7be2f5dec4bc button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-d639ffe7-031a-40b6-92cf-7be2f5dec4bc');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+  <div id="id_9bf527d6-6ead-4c54-b749-5b3a1ca8f323">
+    <style>
+      .colab-df-generate {
+        background-color: #E8F0FE;
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+        display: none;
+        fill: #1967D2;
+        height: 32px;
+        padding: 0 0 0 0;
+        width: 32px;
+      }
+
+      .colab-df-generate:hover {
+        background-color: #E2EBFA;
+        box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+        fill: #174EA6;
+      }
+
+      [theme=dark] .colab-df-generate {
+        background-color: #3B4455;
+        fill: #D2E3FC;
+      }
+
+      [theme=dark] .colab-df-generate:hover {
+        background-color: #434B5C;
+        box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+        filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+        fill: #FFFFFF;
+      }
+    </style>
+    <button class="colab-df-generate" onclick="generateWithVariable('audit_table')"
+            title="Generate code using this dataframe."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px"viewBox="0 0 24 24"
+       width="24px">
+    <path d="M7,19H8.4L18.45,9,17,7.55,7,17.6ZM5,21V16.75L18.45,3.32a2,2,0,0,1,2.83,0l1.4,1.43a1.91,1.91,0,0,1,.58,1.4,1.91,1.91,0,0,1-.58,1.4L9.25,21ZM18.45,9,17,7.55Zm-12,3A5.31,5.31,0,0,0,4.9,8.1,5.31,5.31,0,0,0,1,6.5,5.31,5.31,0,0,0,4.9,4.9,5.31,5.31,0,0,0,6.5,1,5.31,5.31,0,0,0,8.1,4.9,5.31,5.31,0,0,0,12,6.5,5.46,5.46,0,0,0,6.5,12Z"/>
+  </svg>
+    </button>
+    <script>
+      (() => {
+      const buttonEl =
+        document.querySelector('#id_9bf527d6-6ead-4c54-b749-5b3a1ca8f323 button.colab-df-generate');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      buttonEl.onclick = () => {
+        google.colab.notebook.generateWithVariable('audit_table');
+      }
+      })();
+    </script>
+  </div>
+
+    </div>
+  </div>
+
+</div>
+<div class='output'>
+
+  <div id="df-14190ed2-0e47-4977-8209-3c41829d9b92" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>images</th>
+      <th>fish</th>
+    </tr>
+    <tr>
+      <th>class_name</th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>adult</th>
+      <td>104</td>
+      <td>33</td>
+    </tr>
+    <tr>
+      <th>fingerling</th>
+      <td>106</td>
+      <td>35</td>
+    </tr>
+    <tr>
+      <th>juvenile</th>
+      <td>147</td>
+      <td>49</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-14190ed2-0e47-4977-8209-3c41829d9b92')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-14190ed2-0e47-4977-8209-3c41829d9b92 button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-14190ed2-0e47-4977-8209-3c41829d9b92');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+
+</div>
+</section>
+<section class='cell'><h2>Cell 7 — markdown</h2>
+<pre>## 4. Clean metadata and construct image-level index</pre>
+</section>
+<section class='cell'><h2>Cell 8 — code</h2>
+<details><summary>Code</summary><pre>def read_metadata(path,class_name):
+    raw=pd.read_excel(path,header=None)
+    # Find the row containing the filename header, then use positional measurement columns.
+    header_idx=next((i for i,row in raw.iterrows() if row.astype(str).str.lower().str.contains(&quot;filename&quot;).any()),1)
+    d=raw.iloc[header_idx+1:,[0,3,4,5]].copy(); d.columns=[&quot;Filename&quot;,&quot;SL_cm&quot;,&quot;TL_cm&quot;,&quot;Weight_g&quot;]
+    d=d.dropna(how=&quot;all&quot;); d[&quot;Filename&quot;]=d.Filename.astype(str).str.strip()
+    d[&quot;fish_id&quot;]=[canonical_id(class_name,x) for x in d.Filename]
+    d[&quot;class_name&quot;]=class_name.lower(); d[&quot;class_label&quot;]=CLASS_MAPPING[class_name]
+    for c in [&quot;SL_cm&quot;,&quot;TL_cm&quot;,&quot;Weight_g&quot;]: d[c]=pd.to_numeric(d[c].astype(str).str.replace(&quot;,&quot;,&quot;&quot;,regex=False),errors=&quot;coerce&quot;)
+    return d[[&quot;fish_id&quot;,&quot;Filename&quot;,&quot;SL_cm&quot;,&quot;TL_cm&quot;,&quot;Weight_g&quot;,&quot;class_name&quot;,&quot;class_label&quot;]]
+
+meta=pd.concat([read_metadata(ROOT/&quot;fingerling.xlsx&quot;,&quot;Fingerling&quot;),read_metadata(ROOT/&quot;juvenile.xlsx&quot;,&quot;Juvenile&quot;),read_metadata(ROOT/&quot;adult.xlsx&quot;,&quot;Adult&quot;)],ignore_index=True)
+conflicts=meta.groupby(&quot;fish_id&quot;)[[&quot;class_label&quot;,&quot;SL_cm&quot;,&quot;TL_cm&quot;,&quot;Weight_g&quot;]].nunique().max(axis=1); conflicts=conflicts[conflicts&gt;1]
+if len(conflicts): display(meta[meta.fish_id.isin(conflicts.index)]); raise ValueError(&quot;Conflicting fish metadata&quot;)
+if meta.fish_id.duplicated().any(): display(meta[meta.fish_id.duplicated(False)]); raise ValueError(&quot;Duplicate metadata fish IDs&quot;)
+index=audit_images.drop(columns=[&quot;valid&quot;,&quot;error&quot;]).merge(meta,on=[&quot;fish_id&quot;,&quot;class_name&quot;],how=&quot;left&quot;,validate=&quot;many_to_one&quot;)
+image_fish=set(index.fish_id); meta_fish=set(meta.fish_id)
+unmatched_images=index[index.class_label.isna()]; unmatched_meta=meta[~meta.fish_id.isin(image_fish)]
+if len(unmatched_images) or len(unmatched_meta):
+    print(&quot;Unmatched images:&quot;); display(unmatched_images); print(&quot;Unmatched metadata:&quot;); display(unmatched_meta)
+    raise ValueError(&quot;Image/metadata matching is incomplete&quot;)
+index=index[[&quot;fish_id&quot;,&quot;image_path&quot;,&quot;filename&quot;,&quot;class_name&quot;,&quot;class_label&quot;,&quot;SL_cm&quot;,&quot;TL_cm&quot;,&quot;Weight_g&quot;,&quot;source_folder&quot;,&quot;width&quot;,&quot;height&quot;,&quot;sha256&quot;]]
+index.to_csv(OUTPUTS/&quot;data/cleaned_dataset_index.csv&quot;,index=False); meta.to_csv(OUTPUTS/&quot;data/fish_metadata_cleaned.csv&quot;,index=False)
+print(f&quot;Matched {len(index)} images to {index.fish_id.nunique()} fish&quot;)
+</pre></details>
+<div class='output'>
+<pre>Matched 357 images to 117 fish
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 9 — markdown</h2>
+<pre>## 5. Strict completed-dataset validation</pre>
+</section>
+<section class='cell'><h2>Cell 10 — code</h2>
+<details><summary>Code</summary><pre>TARGETS=[&quot;SL_cm&quot;,&quot;TL_cm&quot;,&quot;Weight_g&quot;]
+assert index.image_path.map(lambda x:Path(x).is_file()).all()
+assert index.class_label.notna().all() and index.fish_id.astype(bool).all()
+assert index[TARGETS].notna().all().all()
+assert all(pd.api.types.is_numeric_dtype(index[c]) for c in TARGETS)
+assert (index[TARGETS]&gt;0).all().all() and (index.SL_cm&lt;index.TL_cm).all()
+assert index.groupby(&quot;image_path&quot;).class_label.nunique().max()==1
+assert index.groupby(&quot;fish_id&quot;)[[&quot;class_label&quot;,*TARGETS]].nunique().max().max()==1
+print(&quot;All strict validation checks passed.&quot;)
+</pre></details>
+<div class='output'>
+<pre>All strict validation checks passed.
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 11 — markdown</h2>
+<pre>## 6. Exploratory data analysis</pre>
+</section>
+<section class='cell'><h2>Cell 12 — code</h2>
+<details><summary>Code</summary><pre>fish=index.drop_duplicates(&quot;fish_id&quot;)
+fig,ax=plt.subplots(2,3,figsize=(16,9))
+sns.countplot(data=index,x=&quot;class_name&quot;,ax=ax[0,0]); ax[0,0].set_title(&quot;Images per class&quot;)
+sns.countplot(data=fish,x=&quot;class_name&quot;,ax=ax[0,1]); ax[0,1].set_title(&quot;Independent fish per class&quot;)
+index.groupby(&quot;fish_id&quot;).size().plot.hist(bins=range(1,9),ax=ax[0,2]); ax[0,2].set_title(&quot;Images per fish&quot;)
+for c,a in zip(TARGETS,ax[1]): sns.histplot(data=fish,x=c,hue=&quot;class_name&quot;,kde=True,ax=a)
+plt.tight_layout(); plt.savefig(OUTPUTS/&quot;figures/eda_distributions.png&quot;,dpi=160); plt.show()
+fig,ax=plt.subplots(1,3,figsize=(16,4))
+for c,a in zip(TARGETS,ax): sns.boxplot(data=fish,x=&quot;class_name&quot;,y=c,ax=a)
+plt.tight_layout(); plt.savefig(OUTPUTS/&quot;figures/measurement_boxplots.png&quot;,dpi=160); plt.show()
+sns.heatmap(fish[TARGETS].corr(),annot=True,cmap=&quot;vlag&quot;,vmin=-1,vmax=1); plt.savefig(OUTPUTS/&quot;figures/correlation.png&quot;,dpi=160); plt.show()
+fig,axes=plt.subplots(3,3,figsize=(10,10))
+for r,cls in enumerate([&quot;fingerling&quot;,&quot;juvenile&quot;,&quot;adult&quot;]):
+ for c,(_,row) in enumerate(index[index.class_name==cls].sample(3,random_state=SEED).iterrows()):
+  axes[r,c].imshow(Image.open(row.image_path)); axes[r,c].set_title(row.fish_id); axes[r,c].axis(&quot;off&quot;)
+plt.tight_layout(); plt.savefig(OUTPUTS/&quot;figures/representative_images.png&quot;,dpi=160); plt.show()
+fig,ax=plt.subplots(1,2,figsize=(10,4)); sns.histplot(index.width,ax=ax[0]); sns.histplot(index.height,ax=ax[1]); plt.show()
+print(&quot;Fingerling/juvenile overlap:&quot;, {c:(fish[fish.class_name==&quot;fingerling&quot;][c].max(),fish[fish.class_name==&quot;juvenile&quot;][c].min()) for c in TARGETS})
+</pre></details>
+<div class='output'>
+<img src='images/cell_12_image_01.png' alt='Notebook output from cell 12'>
+</div>
+<div class='output'>
+<img src='images/cell_12_image_02.png' alt='Notebook output from cell 12'>
+</div>
+<div class='output'>
+<img src='images/cell_12_image_03.png' alt='Notebook output from cell 12'>
+</div>
+<div class='output'>
+<img src='images/cell_12_image_04.png' alt='Notebook output from cell 12'>
+</div>
+<div class='output'>
+<img src='images/cell_12_image_05.png' alt='Notebook output from cell 12'>
+</div>
+<div class='output'>
+<pre>Fingerling/juvenile overlap: {&#x27;SL_cm&#x27;: (8.7, 7.5), &#x27;TL_cm&#x27;: (10.0, 8.8), &#x27;Weight_g&#x27;: (8.5, 5.4)}
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 13 — markdown</h2>
+<pre>## 7. Stratified fish-grouped 70/15/15 split and leakage proof</pre>
+</section>
+<section class='cell'><h2>Cell 14 — code</h2>
+<details><summary>Code</summary><pre>def grouped_split(df,seed=SEED):
+    f=df[[&quot;fish_id&quot;,&quot;class_label&quot;]].drop_duplicates()
+    rng=np.random.default_rng(seed); assignment={&quot;train&quot;:[],&quot;validation&quot;:[],&quot;test&quot;:[]}
+    for label,g in f.groupby(&quot;class_label&quot;):
+        ids=g.fish_id.to_numpy().copy(); rng.shuffle(ids); n=len(ids); nt=round(.70*n); nv=round(.15*n)
+        assignment[&quot;train&quot;] += ids[:nt].tolist(); assignment[&quot;validation&quot;] += ids[nt:nt+nv].tolist(); assignment[&quot;test&quot;] += ids[nt+nv:].tolist()
+    return {k:df[df.fish_id.isin(v)].copy().reset_index(drop=True) for k,v in assignment.items()}
+splits=grouped_split(index); train,val,test=splits[&quot;train&quot;],splits[&quot;validation&quot;],splits[&quot;test&quot;]
+ids={k:set(v.fish_id) for k,v in splits.items()}
+assert ids[&quot;train&quot;].isdisjoint(ids[&quot;validation&quot;]) and ids[&quot;train&quot;].isdisjoint(ids[&quot;test&quot;]) and ids[&quot;validation&quot;].isdisjoint(ids[&quot;test&quot;])
+hashes={k:set(v.sha256) for k,v in splits.items()}
+assert hashes[&quot;train&quot;].isdisjoint(hashes[&quot;validation&quot;]) and hashes[&quot;train&quot;].isdisjoint(hashes[&quot;test&quot;]) and hashes[&quot;validation&quot;].isdisjoint(hashes[&quot;test&quot;])
+for name,d in splits.items():
+    d.to_csv(OUTPUTS/f&quot;data/{name}_split.csv&quot;,index=False)
+    print(&quot;\n&quot;,name,&quot;images&quot;,len(d),&quot;fish&quot;,d.fish_id.nunique()); print(&quot;images/class&quot;,d.class_name.value_counts().to_dict()); print(&quot;fish/class&quot;,d.groupby(&quot;class_name&quot;).fish_id.nunique().to_dict()); display(d[TARGETS].describe())
+print(&quot;PASS: zero fish overlap and zero exact duplicate hashes across splits&quot;)
+</pre></details>
+<div class='output'>
+<pre>
+ train images 249 fish 81
+images/class {&#x27;juvenile&#x27;: 102, &#x27;adult&#x27;: 74, &#x27;fingerling&#x27;: 73}
+fish/class {&#x27;adult&#x27;: 23, &#x27;fingerling&#x27;: 24, &#x27;juvenile&#x27;: 34}
+</pre>
+</div>
+<div class='output'>
+
+  <div id="df-d6f55420-08e3-4d80-b381-418d56dd1453" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>SL_cm</th>
+      <th>TL_cm</th>
+      <th>Weight_g</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>count</th>
+      <td>249.000000</td>
+      <td>249.000000</td>
+      <td>249.000000</td>
+    </tr>
+    <tr>
+      <th>mean</th>
+      <td>20.693173</td>
+      <td>23.691566</td>
+      <td>316.515663</td>
+    </tr>
+    <tr>
+      <th>std</th>
+      <td>16.982213</td>
+      <td>19.473302</td>
+      <td>473.099351</td>
+    </tr>
+    <tr>
+      <th>min</th>
+      <td>6.200000</td>
+      <td>7.000000</td>
+      <td>2.800000</td>
+    </tr>
+    <tr>
+      <th>25%</th>
+      <td>7.600000</td>
+      <td>8.800000</td>
+      <td>5.400000</td>
+    </tr>
+    <tr>
+      <th>50%</th>
+      <td>11.600000</td>
+      <td>13.100000</td>
+      <td>16.900000</td>
+    </tr>
+    <tr>
+      <th>75%</th>
+      <td>43.500000</td>
+      <td>50.400000</td>
+      <td>1000.000000</td>
+    </tr>
+    <tr>
+      <th>max</th>
+      <td>52.500000</td>
+      <td>60.400000</td>
+      <td>1300.000000</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-d6f55420-08e3-4d80-b381-418d56dd1453')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-d6f55420-08e3-4d80-b381-418d56dd1453 button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-d6f55420-08e3-4d80-b381-418d56dd1453');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+
+</div>
+<div class='output'>
+<pre>
+ validation images 51 fish 17
+images/class {&#x27;juvenile&#x27;: 21, &#x27;adult&#x27;: 15, &#x27;fingerling&#x27;: 15}
+fish/class {&#x27;adult&#x27;: 5, &#x27;fingerling&#x27;: 5, &#x27;juvenile&#x27;: 7}
+</pre>
+</div>
+<div class='output'>
+
+  <div id="df-1e55f638-5e4f-45cd-918f-cb4d930d410f" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>SL_cm</th>
+      <th>TL_cm</th>
+      <th>Weight_g</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>count</th>
+      <td>51.000000</td>
+      <td>51.000000</td>
+      <td>51.000000</td>
+    </tr>
+    <tr>
+      <th>mean</th>
+      <td>20.452941</td>
+      <td>23.088235</td>
+      <td>309.229412</td>
+    </tr>
+    <tr>
+      <th>std</th>
+      <td>16.932624</td>
+      <td>19.007184</td>
+      <td>472.655801</td>
+    </tr>
+    <tr>
+      <th>min</th>
+      <td>6.000000</td>
+      <td>7.400000</td>
+      <td>2.900000</td>
+    </tr>
+    <tr>
+      <th>25%</th>
+      <td>8.200000</td>
+      <td>9.200000</td>
+      <td>6.000000</td>
+    </tr>
+    <tr>
+      <th>50%</th>
+      <td>11.000000</td>
+      <td>12.500000</td>
+      <td>15.700000</td>
+    </tr>
+    <tr>
+      <th>75%</th>
+      <td>43.000000</td>
+      <td>45.800000</td>
+      <td>850.000000</td>
+    </tr>
+    <tr>
+      <th>max</th>
+      <td>50.500000</td>
+      <td>57.000000</td>
+      <td>1250.000000</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-1e55f638-5e4f-45cd-918f-cb4d930d410f')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-1e55f638-5e4f-45cd-918f-cb4d930d410f button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-1e55f638-5e4f-45cd-918f-cb4d930d410f');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+
+</div>
+<div class='output'>
+<pre>
+ test images 57 fish 19
+images/class {&#x27;juvenile&#x27;: 24, &#x27;fingerling&#x27;: 18, &#x27;adult&#x27;: 15}
+fish/class {&#x27;adult&#x27;: 5, &#x27;fingerling&#x27;: 6, &#x27;juvenile&#x27;: 8}
+</pre>
+</div>
+<div class='output'>
+
+  <div id="df-66cbbe68-9de4-4f3f-9e43-e6df4f0d587d" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>SL_cm</th>
+      <th>TL_cm</th>
+      <th>Weight_g</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>count</th>
+      <td>57.000000</td>
+      <td>57.000000</td>
+      <td>57.000000</td>
+    </tr>
+    <tr>
+      <th>mean</th>
+      <td>19.810526</td>
+      <td>22.552632</td>
+      <td>298.536842</td>
+    </tr>
+    <tr>
+      <th>std</th>
+      <td>16.836119</td>
+      <td>19.242875</td>
+      <td>487.416450</td>
+    </tr>
+    <tr>
+      <th>min</th>
+      <td>6.900000</td>
+      <td>7.600000</td>
+      <td>4.100000</td>
+    </tr>
+    <tr>
+      <th>25%</th>
+      <td>8.200000</td>
+      <td>9.200000</td>
+      <td>7.500000</td>
+    </tr>
+    <tr>
+      <th>50%</th>
+      <td>10.300000</td>
+      <td>11.800000</td>
+      <td>11.500000</td>
+    </tr>
+    <tr>
+      <th>75%</th>
+      <td>46.000000</td>
+      <td>53.000000</td>
+      <td>1000.000000</td>
+    </tr>
+    <tr>
+      <th>max</th>
+      <td>49.000000</td>
+      <td>56.500000</td>
+      <td>1250.000000</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-66cbbe68-9de4-4f3f-9e43-e6df4f0d587d')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-66cbbe68-9de4-4f3f-9e43-e6df4f0d587d button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-66cbbe68-9de4-4f3f-9e43-e6df4f0d587d');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+
+</div>
+<div class='output'>
+<pre>PASS: zero fish overlap and zero exact duplicate hashes across splits
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 15 — markdown</h2>
+<pre>## 8–10. Train-only target scaling, realistic augmentation, and `tf.data`</pre>
+</section>
+<section class='cell'><h2>Cell 16 — code</h2>
+<details><summary>Code</summary><pre>sl_scaler = StandardScaler().fit(train[[&quot;SL_cm&quot;]])
+tl_scaler = StandardScaler().fit(train[[&quot;TL_cm&quot;]])
+weight_scaler = StandardScaler().fit(
+    np.log1p(train[[&quot;Weight_g&quot;]])
+)
+
+joblib.dump(
+    sl_scaler,
+    OUTPUTS / &quot;scalers/sl_scaler.joblib&quot;
+)
+joblib.dump(
+    tl_scaler,
+    OUTPUTS / &quot;scalers/tl_scaler.joblib&quot;
+)
+joblib.dump(
+    weight_scaler,
+    OUTPUTS / &quot;scalers/weight_log_scaler.joblib&quot;
+)
+
+
+def scaled_targets(d):
+    sl_scaled = sl_scaler.transform(
+        d[[&quot;SL_cm&quot;]]
+    )[:, 0]
+
+    tl_scaled = tl_scaler.transform(
+        d[[&quot;TL_cm&quot;]]
+    )[:, 0]
+
+    weight_scaled = weight_scaler.transform(
+        np.log1p(d[[&quot;Weight_g&quot;]])
+    )[:, 0]
+
+    return np.column_stack([
+        sl_scaled,
+        tl_scaled,
+        weight_scaled
+    ]).astype(&quot;float32&quot;)
+
+
+augment = tf.keras.Sequential(
+    [
+        tf.keras.layers.RandomFlip(&quot;horizontal&quot;),
+        tf.keras.layers.RandomRotation(0.045),
+        tf.keras.layers.RandomTranslation(
+            height_factor=0.05,
+            width_factor=0.05
+        ),
+        tf.keras.layers.RandomZoom(
+            height_factor=0.08,
+            width_factor=0.08
+        ),
+        tf.keras.layers.RandomContrast(0.08),
+
+        # Keras 3 expects stddev between 0 and 1.
+        tf.keras.layers.GaussianNoise(0.02),
+    ],
+    name=&quot;moderate_augmentation&quot;
+)
+
+
+def decode(path, label, targets):
+    image_bytes = tf.io.read_file(path)
+
+    image = tf.io.decode_image(
+        image_bytes,
+        channels=3,
+        expand_animations=False
+    )
+
+    image = tf.image.resize_with_pad(
+        image,
+        IMAGE_SIZE,
+        IMAGE_SIZE
+    )
+
+    image = tf.cast(image, tf.float32)
+
+    image.set_shape([
+        IMAGE_SIZE,
+        IMAGE_SIZE,
+        3
+    ])
+
+    return image, {
+        &quot;class_output&quot;: label,
+        &quot;reg_output&quot;: targets
+    }
+
+
+def make_ds(
+    d,
+    training=False,
+    batch_size=BATCH_SIZE,
+    path_col=&quot;image_path&quot;
+):
+    image_paths = d[path_col].astype(str).values
+
+    class_labels = d[&quot;class_label&quot;].astype(
+        &quot;int32&quot;
+    ).values
+
+    regression_targets = scaled_targets(d)
+
+    ds = tf.data.Dataset.from_tensor_slices(
+        (
+            image_paths,
+            class_labels,
+            regression_targets
+        )
+    )
+
+    ds = ds.map(
+        decode,
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
+
+    if training:
+        ds = ds.shuffle(
+            buffer_size=len(d),
+            seed=SEED,
+            reshuffle_each_iteration=True
+        )
+
+    ds = ds.batch(batch_size)
+
+    ds = ds.prefetch(
+        tf.data.AUTOTUNE
+    )
+
+    return ds
+
+
+@tf.autograph.experimental.do_not_convert
+def extract_classification_target(images, targets):
+    return images, targets[&quot;class_output&quot;]
+
+
+def classification_ds(ds):
+    return ds.map(
+        extract_classification_target,
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
+
+
+train_ds = make_ds(
+    train,
+    training=True
+)
+
+val_ds = make_ds(val)
+
+test_ds = make_ds(test)
+
+
+xb, _ = next(iter(train_ds))
+
+augmented_images = augment(
+    xb[:6],
+    training=True
+)
+
+print(
+    &quot;Raw image range:&quot;,
+    float(tf.reduce_min(xb)),
+    float(tf.reduce_max(xb))
+)
+
+print(
+    &quot;Augmented image range:&quot;,
+    float(tf.reduce_min(augmented_images)),
+    float(tf.reduce_max(augmented_images))
+)
+
+
+fig, axes = plt.subplots(
+    2,
+    3,
+    figsize=(10, 7)
+)
+
+for axis, image in zip(
+    axes.flat,
+    augmented_images
+):
+    display_image = tf.cast(
+        tf.clip_by_value(
+            image,
+            0,
+            255
+        ),
+        tf.uint8
+    )
+
+    axis.imshow(display_image)
+    axis.axis(&quot;off&quot;)
+
+plt.tight_layout()
+
+plt.savefig(
+    OUTPUTS / &quot;figures/augmentation_examples.png&quot;,
+    dpi=150,
+    bbox_inches=&quot;tight&quot;
+)
+
+plt.show()</pre></details>
+<div class='output'>
+<pre>Raw image range: 0.0 255.0
+Augmented image range: -0.09173583984375 255.125
+</pre>
+</div>
+<div class='output'>
+<img src='images/cell_16_image_06.png' alt='Notebook output from cell 16'>
+</div>
+</section>
+<section class='cell'><h2>Cell 17 — markdown</h2>
+<pre>## 11. Conservative label-free fish-centred crops</pre>
+</section>
+<section class='cell'><h2>Cell 18 — code</h2>
+<details><summary>Code</summary><pre>def conservative_crop(src,dst):
+    img=cv2.imread(str(src));
+    if img is None: return False
+    h,w=img.shape[:2]; gray=cv2.cvtColor(img,cv2.COLOR_BGR2GRAY); blur=cv2.GaussianBlur(gray,(7,7),0)
+    edges=cv2.Canny(blur,30,100); edges=cv2.morphologyEx(edges,cv2.MORPH_CLOSE,np.ones((15,15),np.uint8))
+    cnts,_=cv2.findContours(edges,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts: crop=img
+    else:
+        x,y,bw,bh=cv2.boundingRect(max(cnts,key=cv2.contourArea)); pad=int(.12*max(bw,bh)); x=max(0,x-pad); y=max(0,y-pad); x2=min(w,x+bw+2*pad); y2=min(h,y+bh+2*pad)
+        area=(x2-x)*(y2-y)
+        crop=img[y:y2,x:x2] if area&gt;=.25*h*w and (x2-x)&gt;=.45*w and (y2-y)&gt;=.20*h else img
+    Path(dst).parent.mkdir(parents=True,exist_ok=True); return cv2.imwrite(str(dst),crop)
+for d in [train,val,test]:
+    paths=[]
+    for _,r in d.iterrows():
+        dst=OUTPUTS/&quot;crops&quot;/r.class_name/r.fish_id/r.filename
+        if not dst.exists(): conservative_crop(r.image_path,dst)
+        paths.append(str(dst))
+    d[&quot;crop_path&quot;]=paths
+fig,ax=plt.subplots(3,2,figsize=(8,10))
+for a,(_,r) in zip(ax,index.sample(3,random_state=SEED).iterrows()): pass
+for i,(_,r) in enumerate(train.sample(3,random_state=SEED).iterrows()):
+    ax[i,0].imshow(Image.open(r.image_path)); ax[i,0].set_title(&quot;Full&quot;); ax[i,1].imshow(Image.open(r.crop_path)); ax[i,1].set_title(&quot;Conservative crop&quot;)
+    ax[i,0].axis(&quot;off&quot;); ax[i,1].axis(&quot;off&quot;)
+plt.tight_layout(); plt.savefig(OUTPUTS/&quot;figures/cropping_examples.png&quot;,dpi=150); plt.show()
+</pre></details>
+<div class='output'>
+<img src='images/cell_18_image_07.png' alt='Notebook output from cell 18'>
+</div>
+</section>
+<section class='cell'><h2>Cell 19 — markdown</h2>
+<pre>## 12–16. Classification models, full-validation metrics, fine-tuning, and controlled experiments</pre>
+</section>
+<section class='cell'><h2>Cell 20 — code</h2>
+<details><summary>Code</summary><pre>class BestMacroF1Checkpoint(tf.keras.callbacks.Callback):
+    &quot;&quot;&quot;One deterministic full-validation pass per epoch; saves on macro-F1 improvement.&quot;&quot;&quot;
+    def __init__(self,val_frame,val_dataset,save_path): super().__init__(); self.frame=val_frame; self.ds=val_dataset; self.save_path=Path(save_path); self.rows=[]; self.best=-np.inf; self.best_epoch=None; self.best_row=None
+    def on_epoch_end(self,epoch,logs=None):
+        logs=logs if logs is not None else {}
+        out=self.model.predict(self.ds,verbose=0); prob=out[0] if isinstance(out,list) else out; pred=prob.argmax(1); y=self.frame.class_label.values
+        pr,re,f1,_=precision_recall_fscore_support(y,pred,labels=[0,1,2],zero_division=0); row={&quot;epoch&quot;:int(epoch+1),&quot;val_accuracy&quot;:float(accuracy_score(y,pred)),&quot;val_balanced_accuracy&quot;:float(balanced_accuracy_score(y,pred)),&quot;val_macro_f1&quot;:float(f1.mean()),&quot;fingerling_recall&quot;:float(re[0]),&quot;juvenile_recall&quot;:float(re[1]),&quot;adult_recall&quot;:float(re[2])}; self.rows.append(row)
+        logs.update({k:v for k,v in row.items() if k!=&quot;epoch&quot;})
+        print(&quot; — full validation:&quot;,row)
+        if row[&quot;val_macro_f1&quot;]&gt;self.best:
+            self.best=row[&quot;val_macro_f1&quot;]; self.best_epoch=epoch+1; self.best_row=row.copy(); self.model.save(self.save_path); print(&quot;Saved new best macro-F1 checkpoint:&quot;,self.save_path)
+
+def focal_loss(gamma=2.,alpha=None):
+    alpha=tf.constant(alpha if alpha is not None else [1.,1.,1.],tf.float32)
+    def loss(y_true,y_pred):
+        y=tf.cast(tf.reshape(y_true,[-1]),tf.int32); p=tf.clip_by_value(y_pred,1e-7,1-1e-7); pt=tf.gather(p,y,batch_dims=1); return tf.reduce_mean(tf.gather(alpha,y)*tf.pow(1-pt,gamma)*(-tf.math.log(pt)))
+    return loss
+
+def get_backbone_preprocessing(backbone_name):
+    name=backbone_name.lower()
+    if &quot;efficientnet&quot; in name: return {&quot;strategy&quot;:&quot;Keras EfficientNet internal Rescaling/Normalization&quot;,&quot;internal&quot;:True,&quot;input_range&quot;:&quot;0..255&quot;}
+    if &quot;mobilenet&quot; in name: return {&quot;strategy&quot;:&quot;Keras MobileNetV3 internal Rescaling (include_preprocessing=True)&quot;,&quot;internal&quot;:True,&quot;input_range&quot;:&quot;0..255&quot;}
+    if &quot;densenet&quot; in name: return {&quot;strategy&quot;:&quot;tf.keras.applications.densenet.preprocess_input external&quot;,&quot;internal&quot;:False,&quot;input_range&quot;:&quot;0..255&quot;}
+    raise ValueError(f&quot;Unknown backbone: {backbone_name}&quot;)
+def backbone_factory(name):
+    table={&quot;EfficientNetB0&quot;:tf.keras.applications.EfficientNetB0,&quot;MobileNetV3Large&quot;:tf.keras.applications.MobileNetV3Large,&quot;DenseNet121&quot;:tf.keras.applications.DenseNet121}
+    kwargs=dict(include_top=False,weights=&quot;imagenet&quot;,input_shape=(IMAGE_SIZE,IMAGE_SIZE,3))
+    if name==&quot;MobileNetV3Large&quot;: kwargs[&quot;include_preprocessing&quot;]=True
+    base=table[name](**kwargs); base._name=name.lower()+&quot;_backbone&quot;; return base
+def apply_backbone_preprocessing(x,backbone_name):
+    info=get_backbone_preprocessing(backbone_name)
+    if info[&quot;internal&quot;]: return x
+    return tf.keras.layers.Lambda(tf.keras.applications.densenet.preprocess_input,name=&quot;densenet_preprocess&quot;)(x)
+def build_classifier(backbone_name=&quot;EfficientNetB0&quot;):
+    inp=tf.keras.Input((IMAGE_SIZE,IMAGE_SIZE,3),name=&quot;image_input&quot;); x=augment(inp); x=apply_backbone_preprocessing(x,backbone_name); base=backbone_factory(backbone_name); base.trainable=False; x=base(x,training=False)
+    x=tf.keras.layers.GlobalAveragePooling2D(name=&quot;head_global_average_pooling&quot;)(x); x=tf.keras.layers.BatchNormalization(name=&quot;head_batch_normalization&quot;)(x); x=tf.keras.layers.Dropout(.4,name=&quot;head_dropout_1&quot;)(x); x=tf.keras.layers.Dense(256,activation=&quot;swish&quot;,name=&quot;head_dense&quot;)(x); x=tf.keras.layers.Dropout(.3,name=&quot;head_dropout_2&quot;)(x)
+    out=tf.keras.layers.Dense(3,activation=&quot;softmax&quot;,dtype=&quot;float32&quot;,name=&quot;class_output&quot;)(x); return tf.keras.Model(inp,out,name=f&quot;catfish_{backbone_name.lower()}_classifier&quot;),base
+
+def find_backbone_layers(model,backbone_name=None):
+    &quot;&quot;&quot;Return (ordered layers, representation), supporting nested and flattened applications.&quot;&quot;&quot;
+    name=(backbone_name or &quot;&quot;).lower(); tokens={&quot;efficientnetb0&quot;:(&quot;stem_&quot;,&quot;block1&quot;,&quot;block2&quot;,&quot;block3&quot;,&quot;block4&quot;,&quot;block5&quot;,&quot;block6&quot;,&quot;block7&quot;,&quot;top_conv&quot;,&quot;top_bn&quot;,&quot;top_activation&quot;,&quot;rescaling&quot;,&quot;normalization&quot;),&quot;mobilenetv3large&quot;:(&quot;conv&quot;,&quot;expanded_conv&quot;,&quot;re_lu&quot;,&quot;multiply&quot;,&quot;project&quot;,&quot;squeeze_excite&quot;,&quot;rescaling&quot;),&quot;densenet121&quot;:(&quot;conv1&quot;,&quot;conv2&quot;,&quot;conv3&quot;,&quot;conv4&quot;,&quot;conv5&quot;,&quot;pool&quot;,&quot;relu&quot;)}
+    key=next((k for k in tokens if k in name),None)
+    if key is None: raise ValueError(f&quot;Unsupported backbone for detection: {backbone_name}&quot;)
+    nested=[l for l in model.layers if isinstance(l,tf.keras.Model) and any(k in l.name.lower() for k in (&quot;efficientnet&quot;,&quot;mobilenet&quot;,&quot;densenet&quot;))]
+    if nested: return list(nested[0].layers),&quot;nested&quot;
+    head_prefixes=(&quot;head_&quot;,&quot;class_output&quot;,&quot;augmentation&quot;,&quot;image_input&quot;,&quot;sl_output&quot;,&quot;tl_output&quot;,&quot;weight_output&quot;)
+    found=[]
+    for layer in model.layers:
+        lname=layer.name.lower()
+        if lname.startswith(head_prefixes): continue
+        if any(lname.startswith(t) or t in lname for t in tokens[key]): found.append(layer)
+    return found,&quot;flattened&quot;
+
+def unfreeze_top_fraction(model,fraction=.25,backbone_name=&quot;EfficientNetB0&quot;):
+    layers,representation=find_backbone_layers(model,backbone_name); fraction=float(np.clip(fraction,.20,.30))
+    if not layers: raise RuntimeError(f&quot;No backbone layers were detected for {backbone_name}; inspected {len(model.layers)} model layers.&quot;)
+    nested=next((m for m in model.layers if isinstance(m,tf.keras.Model) and any(k in m.name.lower() for k in (&quot;efficientnet&quot;,&quot;mobilenet&quot;,&quot;densenet&quot;))),None)
+    if nested is not None: nested.trainable=True
+    for layer in layers: layer.trainable=False
+    start=int(len(layers)*(1-fraction))
+    for layer in layers[start:]:
+        if not isinstance(layer,tf.keras.layers.BatchNormalization): layer.trainable=True
+    for layer in model.layers:
+        if isinstance(layer,tf.keras.layers.BatchNormalization): layer.trainable=False
+    bn=sum(isinstance(l,tf.keras.layers.BatchNormalization) for l in layers); unfrozen=[l for l in layers if l.trainable]
+    trainable=int(sum(np.prod(w.shape) for w in model.trainable_weights)); frozen=int(sum(np.prod(w.shape) for w in model.non_trainable_weights))
+    info={&quot;backbone&quot;:backbone_name,&quot;representation&quot;:representation,&quot;detected_backbone_layers&quot;:len(layers),&quot;frozen_backbone_layers&quot;:len(layers)-len(unfrozen),&quot;unfrozen_backbone_layers&quot;:len(unfrozen),&quot;first_unfrozen_layer&quot;:unfrozen[0].name if unfrozen else None,&quot;last_unfrozen_layer&quot;:unfrozen[-1].name if unfrozen else None,&quot;batchnorm_layers_frozen&quot;:bn,&quot;trainable_parameters&quot;:trainable,&quot;non_trainable_parameters&quot;:frozen}
+    print(&quot;Fine-tuning diagnostic:&quot;,json.dumps(info,indent=2))
+    if DEBUG_MODEL_LAYERS:
+        for l in model.layers: print(l.name,l.__class__.__name__,&quot;trainable=&quot;,l.trainable)
+    return info
+
+fish_counts=train.drop_duplicates(&quot;fish_id&quot;).class_label.value_counts().sort_index(); cw={i:float(len(fish_counts)/(3*fish_counts[i])) for i in range(3)}
+EXPS=[(&quot;effb0_ce&quot;,&quot;EfficientNetB0&quot;,&quot;image_path&quot;,&quot;ce&quot;,&quot;none&quot;),
+      (&quot;effb0_weights&quot;,&quot;EfficientNetB0&quot;,&quot;image_path&quot;,&quot;ce&quot;,&quot;class_weights&quot;),
+      (&quot;effb0_focal&quot;,&quot;EfficientNetB0&quot;,&quot;image_path&quot;,&quot;focal&quot;,&quot;none&quot;)]
+if RUN_CROPPING_EXPERIMENT and not QUICK_MODE: EXPS.append((&quot;effb0_crop&quot;,&quot;EfficientNetB0&quot;,&quot;crop_path&quot;,&quot;ce&quot;,&quot;class_weights&quot;))
+if RUN_ALTERNATIVE_BACKBONE and not QUICK_MODE: EXPS.append((&quot;mobilenet_crop&quot;,&quot;MobileNetV3Large&quot;,&quot;crop_path&quot; if RUN_CROPPING_EXPERIMENT else &quot;image_path&quot;,&quot;ce&quot;,&quot;class_weights&quot;))
+experiment_rows=[]
+for name,bb,path_col,loss_name,balance in EXPS:
+    try:
+        print(&quot;\n=====&quot;,name,&quot;=====&quot;); tf.keras.backend.clear_session(); gc.collect(); start=time.time(); print(&quot;Preprocessing:&quot;,get_backbone_preprocessing(bb))
+        tr=classification_ds(make_ds(train,True,path_col=path_col)); va=classification_ds(make_ds(val,path_col=path_col))
+        loss=focal_loss(alpha=list(cw.values())) if loss_name==&quot;focal&quot; else &quot;sparse_categorical_crossentropy&quot;; frozen_path=OUTPUTS/f&quot;models/{name}_frozen.keras&quot;
+        frozen_rows=[]
+        if RESUME_FROM_CHECKPOINT and frozen_path.exists(): print(&quot;Resuming from frozen checkpoint:&quot;,frozen_path)
+        else:
+            model,_=build_classifier(bb); model.compile(tf.keras.optimizers.Adam(3e-4),loss=loss,metrics=[&quot;accuracy&quot;]); cb=BestMacroF1Checkpoint(val,va,frozen_path)
+            model.fit(tr,validation_data=va,epochs=HEAD_EPOCHS,class_weight=cw if balance==&quot;class_weights&quot; else None,callbacks=[cb,tf.keras.callbacks.EarlyStopping(monitor=&quot;val_loss&quot;,patience=3,restore_best_weights=True),tf.keras.callbacks.ReduceLROnPlateau(monitor=&quot;val_loss&quot;,patience=2,factor=.3)],verbose=1); frozen_rows=cb.rows
+        model=tf.keras.models.load_model(frozen_path,custom_objects={&quot;loss&quot;:loss} if loss_name==&quot;focal&quot; else {},compile=False)
+        if tuple(model.input_shape[1:])!=(IMAGE_SIZE,IMAGE_SIZE,3) or int(model.output_shape[-1])!=len(CLASS_NAMES): raise ValueError(&quot;Checkpoint architecture/class mapping does not match current configuration&quot;)
+        unfreeze_top_fraction(model,.25,bb)
+        model.compile(tf.keras.optimizers.AdamW(learning_rate=1e-5,weight_decay=1e-5,clipnorm=1.),loss=loss,metrics=[&quot;accuracy&quot;]); fine_path=OUTPUTS/f&quot;models/{name}.keras&quot;; cb2=BestMacroF1Checkpoint(val,va,fine_path)
+        model.fit(tr,validation_data=va,epochs=FINE_EPOCHS,class_weight=cw if balance==&quot;class_weights&quot; else None,callbacks=[cb2,tf.keras.callbacks.EarlyStopping(monitor=&quot;val_loss&quot;,patience=3,restore_best_weights=True),tf.keras.callbacks.ReduceLROnPlateau(monitor=&quot;val_loss&quot;,patience=2,factor=.3)],verbose=1)
+        allrows=frozen_rows+cb2.rows; best=max(allrows,key=lambda x:x[&quot;val_macro_f1&quot;]); best.update(experiment=name,backbone=bb,image_type=path_col,loss=loss_name,balancing=balance,frozen_epochs=len(frozen_rows),fine_epochs=len(cb2.rows),training_seconds=time.time()-start,trainable_parameters=int(sum(np.prod(w.shape) for w in model.trainable_weights)))
+        experiment_rows.append(best); pd.DataFrame(allrows).to_csv(OUTPUTS/f&quot;histories/{name}.csv&quot;,index=False)
+    except Exception as exc:
+        print(f&quot;Experiment failed: {name}\n{type(exc).__name__}: {exc}&quot;); failed={&quot;experiment&quot;:name,&quot;error_type&quot;:type(exc).__name__,&quot;error&quot;:str(exc)}; pd.DataFrame([failed]).to_csv(OUTPUTS/f&quot;reports/{name}_failure.csv&quot;,index=False)
+        if name==&quot;effb0_ce&quot;: raise
+    finally: tf.keras.backend.clear_session(); gc.collect()
+experiments=pd.DataFrame(experiment_rows).sort_values([&quot;val_macro_f1&quot;,&quot;juvenile_recall&quot;],ascending=False); experiments.to_csv(OUTPUTS/&quot;reports/classification_experiments.csv&quot;,index=False); display(experiments)
+best_exp=experiments.iloc[0]; BEST_CLASS_MODEL=OUTPUTS/f&quot;models/{best_exp.experiment}.keras&quot;; BEST_PATH_COL=best_exp.image_type; BEST_BACKBONE=best_exp.backbone
+shutil.copy2(BEST_CLASS_MODEL,OUTPUTS/&quot;models/best_classification_model.keras&quot;)
+</pre></details>
+<div class='output'>
+<pre>
+===== effb0_ce =====
+Preprocessing: {&#x27;strategy&#x27;: &#x27;Keras EfficientNet internal Rescaling/Normalization&#x27;, &#x27;internal&#x27;: True, &#x27;input_range&#x27;: &#x27;0..255&#x27;}
+Downloading data from https://storage.googleapis.com/keras-applications/efficientnetb0_notop.h5
+[1m16705208/16705208[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m2s[0m 0us/step
+Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 52ms/step - accuracy: 0.4903 - loss: 1.3640 — full validation: {&#x27;epoch&#x27;: 1, &#x27;val_accuracy&#x27;: 0.803921568627451, &#x27;val_balanced_accuracy&#x27;: 0.7904761904761904, &#x27;val_macro_f1&#x27;: 0.8038950804908253, &#x27;fingerling_recall&#x27;: 0.8, &#x27;juvenile_recall&#x27;: 0.9047619047619048, &#x27;adult_recall&#x27;: 0.6666666666666666}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_ce_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m28s[0m 717ms/step - accuracy: 0.5944 - loss: 1.0774 - val_accuracy: 0.8039 - val_loss: 0.6495 - val_balanced_accuracy: 0.7905 - val_macro_f1: 0.8039 - fingerling_recall: 0.8000 - juvenile_recall: 0.9048 - adult_recall: 0.6667 - learning_rate: 3.0000e-04
+Epoch 2/2
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 51ms/step - accuracy: 0.8214 - loss: 0.4665 — full validation: {&#x27;epoch&#x27;: 2, &#x27;val_accuracy&#x27;: 0.8235294117647058, &#x27;val_balanced_accuracy&#x27;: 0.8063492063492063, &#x27;val_macro_f1&#x27;: 0.8248153962439676, &#x27;fingerling_recall&#x27;: 0.8, &#x27;juvenile_recall&#x27;: 0.9523809523809523, &#x27;adult_recall&#x27;: 0.6666666666666666}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_ce_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m3s[0m 140ms/step - accuracy: 0.8193 - loss: 0.4808 - val_accuracy: 0.8235 - val_loss: 0.5405 - val_balanced_accuracy: 0.8063 - val_macro_f1: 0.8248 - fingerling_recall: 0.8000 - juvenile_recall: 0.9524 - adult_recall: 0.6667 - learning_rate: 3.0000e-04
+Fine-tuning diagnostic: {
+  &quot;backbone&quot;: &quot;EfficientNetB0&quot;,
+  &quot;representation&quot;: &quot;nested&quot;,
+  &quot;detected_backbone_layers&quot;: 238,
+  &quot;frozen_backbone_layers&quot;: 191,
+  &quot;unfrozen_backbone_layers&quot;: 47,
+  &quot;first_unfrozen_layer&quot;: &quot;block6b_expand_activation&quot;,
+  &quot;last_unfrozen_layer&quot;: &quot;top_activation&quot;,
+  &quot;batchnorm_layers_frozen&quot;: 49,
+  &quot;trainable_parameters&quot;: 2977987,
+  &quot;non_trainable_parameters&quot;: 1405411
+}
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 62ms/step - accuracy: 0.8904 - loss: 0.4992 — full validation: {&#x27;epoch&#x27;: 1, &#x27;val_accuracy&#x27;: 0.8627450980392157, &#x27;val_balanced_accuracy&#x27;: 0.8507936507936508, &#x27;val_macro_f1&#x27;: 0.8612836438923396, &#x27;fingerling_recall&#x27;: 0.8666666666666667, &#x27;juvenile_recall&#x27;: 0.9523809523809523, &#x27;adult_recall&#x27;: 0.7333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_ce.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m33s[0m 693ms/step - accuracy: 0.8675 - loss: 0.5079 - val_accuracy: 0.8627 - val_loss: 0.4818 - val_balanced_accuracy: 0.8508 - val_macro_f1: 0.8613 - fingerling_recall: 0.8667 - juvenile_recall: 0.9524 - adult_recall: 0.7333 - learning_rate: 1.0000e-05
+
+===== effb0_weights =====
+Preprocessing: {&#x27;strategy&#x27;: &#x27;Keras EfficientNet internal Rescaling/Normalization&#x27;, &#x27;internal&#x27;: True, &#x27;input_range&#x27;: &#x27;0..255&#x27;}
+Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 51ms/step - accuracy: 0.5679 - loss: 0.0415</pre>
+</div>
+<div class='output'>
+<pre>WARNING:tensorflow:5 out of the last 13 calls to &lt;function TensorFlowTrainer.make_predict_function.&lt;locals&gt;.one_step_on_data_distributed at 0x7de12c8ee480&gt; triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+WARNING:tensorflow:5 out of the last 13 calls to &lt;function TensorFlowTrainer.make_predict_function.&lt;locals&gt;.one_step_on_data_distributed at 0x7de12c8ee480&gt; triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+</pre>
+</div>
+<div class='output'>
+<pre> — full validation: {&#x27;epoch&#x27;: 1, &#x27;val_accuracy&#x27;: 0.8431372549019608, &#x27;val_balanced_accuracy&#x27;: 0.834920634920635, &#x27;val_macro_f1&#x27;: 0.83794296400187, &#x27;fingerling_recall&#x27;: 1.0, &#x27;juvenile_recall&#x27;: 0.9047619047619048, &#x27;adult_recall&#x27;: 0.6}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_weights_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m22s[0m 673ms/step - accuracy: 0.6827 - loss: 0.0285 - val_accuracy: 0.8431 - val_loss: 0.6195 - val_balanced_accuracy: 0.8349 - val_macro_f1: 0.8379 - fingerling_recall: 1.0000 - juvenile_recall: 0.9048 - adult_recall: 0.6000 - learning_rate: 3.0000e-04
+Epoch 2/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 49ms/step - accuracy: 0.8303 - loss: 0.0122 — full validation: {&#x27;epoch&#x27;: 2, &#x27;val_accuracy&#x27;: 0.9019607843137255, &#x27;val_balanced_accuracy&#x27;: 0.8952380952380953, &#x27;val_macro_f1&#x27;: 0.9038496624703521, &#x27;fingerling_recall&#x27;: 0.9333333333333333, &#x27;juvenile_recall&#x27;: 0.9523809523809523, &#x27;adult_recall&#x27;: 0.8}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_weights_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m3s[0m 137ms/step - accuracy: 0.8233 - loss: 0.0140 - val_accuracy: 0.9020 - val_loss: 0.4755 - val_balanced_accuracy: 0.8952 - val_macro_f1: 0.9038 - fingerling_recall: 0.9333 - juvenile_recall: 0.9524 - adult_recall: 0.8000 - learning_rate: 3.0000e-04
+Fine-tuning diagnostic: {
+  &quot;backbone&quot;: &quot;EfficientNetB0&quot;,
+  &quot;representation&quot;: &quot;nested&quot;,
+  &quot;detected_backbone_layers&quot;: 238,
+  &quot;frozen_backbone_layers&quot;: 191,
+  &quot;unfrozen_backbone_layers&quot;: 47,
+  &quot;first_unfrozen_layer&quot;: &quot;block6b_expand_activation&quot;,
+  &quot;last_unfrozen_layer&quot;: &quot;top_activation&quot;,
+  &quot;batchnorm_layers_frozen&quot;: 49,
+  &quot;trainable_parameters&quot;: 2977987,
+  &quot;non_trainable_parameters&quot;: 1405411
+}
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 62ms/step - accuracy: 0.8924 - loss: 0.0176 — full validation: {&#x27;epoch&#x27;: 1, &#x27;val_accuracy&#x27;: 0.9215686274509803, &#x27;val_balanced_accuracy&#x27;: 0.9238095238095237, &#x27;val_macro_f1&#x27;: 0.9238095238095237, &#x27;fingerling_recall&#x27;: 0.9333333333333333, &#x27;juvenile_recall&#x27;: 0.9047619047619048, &#x27;adult_recall&#x27;: 0.9333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_weights.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m26s[0m 700ms/step - accuracy: 0.8755 - loss: 0.0182 - val_accuracy: 0.9216 - val_loss: 0.4355 - val_balanced_accuracy: 0.9238 - val_macro_f1: 0.9238 - fingerling_recall: 0.9333 - juvenile_recall: 0.9048 - adult_recall: 0.9333 - learning_rate: 1.0000e-05
+
+===== effb0_focal =====
+Preprocessing: {&#x27;strategy&#x27;: &#x27;Keras EfficientNet internal Rescaling/Normalization&#x27;, &#x27;internal&#x27;: True, &#x27;input_range&#x27;: &#x27;0..255&#x27;}
+Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 51ms/step - accuracy: 0.5069 - loss: 0.0304 — full validation: {&#x27;epoch&#x27;: 1, &#x27;val_accuracy&#x27;: 0.7843137254901961, &#x27;val_balanced_accuracy&#x27;: 0.7873015873015873, &#x27;val_macro_f1&#x27;: 0.7818615493034097, &#x27;fingerling_recall&#x27;: 1.0, &#x27;juvenile_recall&#x27;: 0.7619047619047619, &#x27;adult_recall&#x27;: 0.6}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_focal_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m23s[0m 624ms/step - accuracy: 0.6024 - loss: 0.0242 - val_accuracy: 0.7843 - val_loss: 0.0092 - val_balanced_accuracy: 0.7873 - val_macro_f1: 0.7819 - fingerling_recall: 1.0000 - juvenile_recall: 0.7619 - adult_recall: 0.6000 - learning_rate: 3.0000e-04
+Epoch 2/2
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 64ms/step - accuracy: 0.8325 - loss: 0.0082 — full validation: {&#x27;epoch&#x27;: 2, &#x27;val_accuracy&#x27;: 0.8235294117647058, &#x27;val_balanced_accuracy&#x27;: 0.8126984126984126, &#x27;val_macro_f1&#x27;: 0.8143064134828033, &#x27;fingerling_recall&#x27;: 1.0, &#x27;juvenile_recall&#x27;: 0.9047619047619048, &#x27;adult_recall&#x27;: 0.5333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_focal_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m4s[0m 157ms/step - accuracy: 0.8474 - loss: 0.0074 - val_accuracy: 0.8235 - val_loss: 0.0077 - val_balanced_accuracy: 0.8127 - val_macro_f1: 0.8143 - fingerling_recall: 1.0000 - juvenile_recall: 0.9048 - adult_recall: 0.5333 - learning_rate: 3.0000e-04
+Fine-tuning diagnostic: {
+  &quot;backbone&quot;: &quot;EfficientNetB0&quot;,
+  &quot;representation&quot;: &quot;nested&quot;,
+  &quot;detected_backbone_layers&quot;: 238,
+  &quot;frozen_backbone_layers&quot;: 191,
+  &quot;unfrozen_backbone_layers&quot;: 47,
+  &quot;first_unfrozen_layer&quot;: &quot;block6b_expand_activation&quot;,
+  &quot;last_unfrozen_layer&quot;: &quot;top_activation&quot;,
+  &quot;batchnorm_layers_frozen&quot;: 49,
+  &quot;trainable_parameters&quot;: 2977987,
+  &quot;non_trainable_parameters&quot;: 1405411
+}
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 64ms/step - accuracy: 0.8798 - loss: 0.0059 — full validation: {&#x27;epoch&#x27;: 1, &#x27;val_accuracy&#x27;: 0.8431372549019608, &#x27;val_balanced_accuracy&#x27;: 0.8476190476190476, &#x27;val_macro_f1&#x27;: 0.845295478220951, &#x27;fingerling_recall&#x27;: 1.0, &#x27;juvenile_recall&#x27;: 0.8095238095238095, &#x27;adult_recall&#x27;: 0.7333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_focal.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m28s[0m 715ms/step - accuracy: 0.8514 - loss: 0.0063 - val_accuracy: 0.8431 - val_loss: 0.0057 - val_balanced_accuracy: 0.8476 - val_macro_f1: 0.8453 - fingerling_recall: 1.0000 - juvenile_recall: 0.8095 - adult_recall: 0.7333 - learning_rate: 1.0000e-05
+</pre>
+</div>
+<div class='output'>
+
+  <div id="df-b73c950a-0214-42d0-983d-a58b0bc9015e" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>epoch</th>
+      <th>val_accuracy</th>
+      <th>val_balanced_accuracy</th>
+      <th>val_macro_f1</th>
+      <th>fingerling_recall</th>
+      <th>juvenile_recall</th>
+      <th>adult_recall</th>
+      <th>experiment</th>
+      <th>backbone</th>
+      <th>image_type</th>
+      <th>loss</th>
+      <th>balancing</th>
+      <th>frozen_epochs</th>
+      <th>fine_epochs</th>
+      <th>training_seconds</th>
+      <th>trainable_parameters</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>1</th>
+      <td>1</td>
+      <td>0.921569</td>
+      <td>0.923810</td>
+      <td>0.923810</td>
+      <td>0.933333</td>
+      <td>0.904762</td>
+      <td>0.933333</td>
+      <td>effb0_weights</td>
+      <td>EfficientNetB0</td>
+      <td>image_path</td>
+      <td>ce</td>
+      <td>class_weights</td>
+      <td>2</td>
+      <td>1</td>
+      <td>55.584351</td>
+      <td>2977987</td>
+    </tr>
+    <tr>
+      <th>0</th>
+      <td>1</td>
+      <td>0.862745</td>
+      <td>0.850794</td>
+      <td>0.861284</td>
+      <td>0.866667</td>
+      <td>0.952381</td>
+      <td>0.733333</td>
+      <td>effb0_ce</td>
+      <td>EfficientNetB0</td>
+      <td>image_path</td>
+      <td>ce</td>
+      <td>none</td>
+      <td>2</td>
+      <td>1</td>
+      <td>69.941550</td>
+      <td>2977987</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>1</td>
+      <td>0.843137</td>
+      <td>0.847619</td>
+      <td>0.845295</td>
+      <td>1.000000</td>
+      <td>0.809524</td>
+      <td>0.733333</td>
+      <td>effb0_focal</td>
+      <td>EfficientNetB0</td>
+      <td>image_path</td>
+      <td>focal</td>
+      <td>none</td>
+      <td>2</td>
+      <td>1</td>
+      <td>58.796221</td>
+      <td>2977987</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-b73c950a-0214-42d0-983d-a58b0bc9015e')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-b73c950a-0214-42d0-983d-a58b0bc9015e button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-b73c950a-0214-42d0-983d-a58b0bc9015e');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+  <div id="id_366b999b-6ca9-4c9b-8f97-f5681fee17c4">
+    <style>
+      .colab-df-generate {
+        background-color: #E8F0FE;
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+        display: none;
+        fill: #1967D2;
+        height: 32px;
+        padding: 0 0 0 0;
+        width: 32px;
+      }
+
+      .colab-df-generate:hover {
+        background-color: #E2EBFA;
+        box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+        fill: #174EA6;
+      }
+
+      [theme=dark] .colab-df-generate {
+        background-color: #3B4455;
+        fill: #D2E3FC;
+      }
+
+      [theme=dark] .colab-df-generate:hover {
+        background-color: #434B5C;
+        box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+        filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+        fill: #FFFFFF;
+      }
+    </style>
+    <button class="colab-df-generate" onclick="generateWithVariable('experiments')"
+            title="Generate code using this dataframe."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px"viewBox="0 0 24 24"
+       width="24px">
+    <path d="M7,19H8.4L18.45,9,17,7.55,7,17.6ZM5,21V16.75L18.45,3.32a2,2,0,0,1,2.83,0l1.4,1.43a1.91,1.91,0,0,1,.58,1.4,1.91,1.91,0,0,1-.58,1.4L9.25,21ZM18.45,9,17,7.55Zm-12,3A5.31,5.31,0,0,0,4.9,8.1,5.31,5.31,0,0,0,1,6.5,5.31,5.31,0,0,0,4.9,4.9,5.31,5.31,0,0,0,6.5,1,5.31,5.31,0,0,0,8.1,4.9,5.31,5.31,0,0,0,12,6.5,5.46,5.46,0,0,0,6.5,12Z"/>
+  </svg>
+    </button>
+    <script>
+      (() => {
+      const buttonEl =
+        document.querySelector('#id_366b999b-6ca9-4c9b-8f97-f5681fee17c4 button.colab-df-generate');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      buttonEl.onclick = () => {
+        google.colab.notebook.generateWithVariable('experiments');
+      }
+      })();
+    </script>
+  </div>
+
+    </div>
+  </div>
+
+</div>
+<div class='output'>
+<pre>PosixPath(&#x27;/content/outputs/models/best_classification_model.keras&#x27;)</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 21 — markdown</h2>
+<pre>## 17–18. Regression-only and multi-task models</pre>
+</section>
+<section class='cell'><h2>Cell 22 — code</h2>
+<details><summary>Code</summary><pre>def build_multitask(backbone_name,classification=True):
+    inp=tf.keras.Input((IMAGE_SIZE,IMAGE_SIZE,3),name=&quot;image_input&quot;); x=augment(inp); x=apply_backbone_preprocessing(x,backbone_name); base=backbone_factory(backbone_name); base.trainable=False; x=base(x,training=False)
+    z=tf.keras.layers.GlobalAveragePooling2D(name=&quot;head_global_average_pooling&quot;)(x); z=tf.keras.layers.BatchNormalization(name=&quot;head_batch_normalization&quot;)(z); z=tf.keras.layers.Dropout(.35,name=&quot;head_dropout&quot;)(z); z=tf.keras.layers.Dense(192,activation=&quot;swish&quot;,name=&quot;head_dense&quot;)(z)
+    outputs=[]
+    if classification: outputs.append(tf.keras.layers.Dense(3,activation=&quot;softmax&quot;,dtype=&quot;float32&quot;,name=&quot;class_output&quot;)(tf.keras.layers.Dropout(.2)(z)))
+    for n in [&quot;sl_output&quot;,&quot;tl_output&quot;,&quot;weight_output&quot;]: outputs.append(tf.keras.layers.Dense(1,dtype=&quot;float32&quot;,name=n)(tf.keras.layers.Dense(64,activation=&quot;swish&quot;)(z)))
+    return tf.keras.Model(inp,outputs,name=f&quot;catfish_{backbone_name.lower()}_{&#x27;multitask&#x27; if classification else &#x27;regression&#x27;}&quot;),base
+def separate_targets(ds,classification=True):
+    def f(x,y):
+        t=y[&quot;reg_output&quot;]; out={&quot;sl_output&quot;:t[:,0],&quot;tl_output&quot;:t[:,1],&quot;weight_output&quot;:t[:,2]}
+        if classification: out[&quot;class_output&quot;]=y[&quot;class_output&quot;]
+        return x,out
+    return ds.map(f)
+REG_PATH=OUTPUTS/&quot;models/best_regression_model.keras&quot;; MULTI_PATH=OUTPUTS/&quot;models/best_multitask_model.keras&quot;
+if RUN_REGRESSION:
+    tf.keras.backend.clear_session(); reg,regbase=build_multitask(BEST_BACKBONE,False)
+    losses={n:tf.keras.losses.Huber() for n in [&quot;sl_output&quot;,&quot;tl_output&quot;,&quot;weight_output&quot;]}
+    reg.compile(tf.keras.optimizers.Adam(3e-4),loss=losses)
+    reg.fit(separate_targets(make_ds(train,True,path_col=BEST_PATH_COL),False),validation_data=separate_targets(make_ds(val,path_col=BEST_PATH_COL),False),epochs=HEAD_EPOCHS,callbacks=[tf.keras.callbacks.ModelCheckpoint(REG_PATH,save_best_only=True,monitor=&quot;val_loss&quot;),tf.keras.callbacks.EarlyStopping(monitor=&quot;val_loss&quot;,patience=3,restore_best_weights=True)],verbose=1)
+    unfreeze_top_fraction(reg,.25,BEST_BACKBONE); reg.compile(tf.keras.optimizers.AdamW(1e-5,weight_decay=1e-5,clipnorm=1.),loss=losses); reg.fit(separate_targets(make_ds(train,True,path_col=BEST_PATH_COL),False),validation_data=separate_targets(make_ds(val,path_col=BEST_PATH_COL),False),epochs=FINE_EPOCHS,callbacks=[tf.keras.callbacks.ModelCheckpoint(REG_PATH,save_best_only=True,monitor=&quot;val_loss&quot;),tf.keras.callbacks.EarlyStopping(monitor=&quot;val_loss&quot;,patience=3)],verbose=1)
+if RUN_MULTITASK:
+    tf.keras.backend.clear_session(); multi,mbase=build_multitask(BEST_BACKBONE,True)
+    losses={&quot;class_output&quot;:&quot;sparse_categorical_crossentropy&quot;,&quot;sl_output&quot;:tf.keras.losses.Huber(),&quot;tl_output&quot;:tf.keras.losses.Huber(),&quot;weight_output&quot;:tf.keras.losses.Huber()}; weights={&quot;class_output&quot;:1.,&quot;sl_output&quot;:.25,&quot;tl_output&quot;:.25,&quot;weight_output&quot;:.5}
+    multi.compile(tf.keras.optimizers.Adam(3e-4),loss=losses,loss_weights=weights,metrics={&quot;class_output&quot;:&quot;accuracy&quot;})
+    multi.fit(separate_targets(make_ds(train,True,path_col=BEST_PATH_COL)),validation_data=separate_targets(make_ds(val,path_col=BEST_PATH_COL)),epochs=HEAD_EPOCHS,callbacks=[tf.keras.callbacks.ModelCheckpoint(MULTI_PATH,save_best_only=True,monitor=&quot;val_loss&quot;),tf.keras.callbacks.EarlyStopping(monitor=&quot;val_loss&quot;,patience=3,restore_best_weights=True)],verbose=1)
+    unfreeze_top_fraction(multi,.25,BEST_BACKBONE); multi.compile(tf.keras.optimizers.AdamW(1e-5,weight_decay=1e-5,clipnorm=1.),loss=losses,loss_weights=weights,metrics={&quot;class_output&quot;:&quot;accuracy&quot;}); multi.fit(separate_targets(make_ds(train,True,path_col=BEST_PATH_COL)),validation_data=separate_targets(make_ds(val,path_col=BEST_PATH_COL)),epochs=FINE_EPOCHS,callbacks=[tf.keras.callbacks.ModelCheckpoint(MULTI_PATH,save_best_only=True,monitor=&quot;val_loss&quot;),tf.keras.callbacks.EarlyStopping(monitor=&quot;val_loss&quot;,patience=3)],verbose=1)
+</pre></details>
+<div class='output'>
+<pre>Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m20s[0m 318ms/step - loss: 1.5691 - sl_output_loss: 0.5668 - tl_output_loss: 0.4915 - weight_output_loss: 0.4977 - val_loss: 1.0377 - val_sl_output_loss: 0.2984 - val_tl_output_loss: 0.2718 - val_weight_output_loss: 0.3257
+Epoch 2/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m2s[0m 78ms/step - loss: 1.0413 - sl_output_loss: 0.4279 - tl_output_loss: 0.3530 - weight_output_loss: 0.2650 - val_loss: 1.0672 - val_sl_output_loss: 0.3035 - val_tl_output_loss: 0.2613 - val_weight_output_loss: 0.3101
+Fine-tuning diagnostic: {
+  &quot;backbone&quot;: &quot;EfficientNetB0&quot;,
+  &quot;representation&quot;: &quot;nested&quot;,
+  &quot;detected_backbone_layers&quot;: 238,
+  &quot;frozen_backbone_layers&quot;: 191,
+  &quot;unfrozen_backbone_layers&quot;: 47,
+  &quot;first_unfrozen_layer&quot;: &quot;block6b_expand_activation&quot;,
+  &quot;last_unfrozen_layer&quot;: &quot;top_activation&quot;,
+  &quot;batchnorm_layers_frozen&quot;: 49,
+  &quot;trainable_parameters&quot;: 2932483,
+  &quot;non_trainable_parameters&quot;: 1405411
+}
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m23s[0m 319ms/step - loss: 0.9826 - sl_output_loss: 0.3191 - tl_output_loss: 0.3457 - weight_output_loss: 0.3149 - val_loss: 0.9139 - val_sl_output_loss: 0.2723 - val_tl_output_loss: 0.2461 - val_weight_output_loss: 0.2885
+Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m20s[0m 372ms/step - class_output_accuracy: 0.5863 - class_output_loss: 1.1642 - loss: 1.7458 - sl_output_loss: 0.5831 - tl_output_loss: 0.5336 - weight_output_loss: 0.5849 - val_class_output_accuracy: 0.8039 - val_class_output_loss: 0.7245 - val_loss: 1.0920 - val_sl_output_loss: 0.3166 - val_tl_output_loss: 0.3482 - val_weight_output_loss: 0.3430
+Epoch 2/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m3s[0m 133ms/step - class_output_accuracy: 0.8434 - class_output_loss: 0.4137 - loss: 0.8051 - sl_output_loss: 0.3736 - tl_output_loss: 0.4179 - weight_output_loss: 0.3801 - val_class_output_accuracy: 0.8235 - val_class_output_loss: 0.6036 - val_loss: 0.9589 - val_sl_output_loss: 0.2836 - val_tl_output_loss: 0.3208 - val_weight_output_loss: 0.3347
+Fine-tuning diagnostic: {
+  &quot;backbone&quot;: &quot;EfficientNetB0&quot;,
+  &quot;representation&quot;: &quot;nested&quot;,
+  &quot;detected_backbone_layers&quot;: 238,
+  &quot;frozen_backbone_layers&quot;: 191,
+  &quot;unfrozen_backbone_layers&quot;: 47,
+  &quot;first_unfrozen_layer&quot;: &quot;block6b_expand_activation&quot;,
+  &quot;last_unfrozen_layer&quot;: &quot;top_activation&quot;,
+  &quot;batchnorm_layers_frozen&quot;: 49,
+  &quot;trainable_parameters&quot;: 2933062,
+  &quot;non_trainable_parameters&quot;: 1405411
+}
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m25s[0m 328ms/step - class_output_accuracy: 0.8474 - class_output_loss: 0.5558 - loss: 0.8973 - sl_output_loss: 0.3000 - tl_output_loss: 0.3492 - weight_output_loss: 0.3493 - val_class_output_accuracy: 0.8431 - val_class_output_loss: 0.5887 - val_loss: 0.8772 - val_sl_output_loss: 0.2718 - val_tl_output_loss: 0.3170 - val_weight_output_loss: 0.3086
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 23 — markdown</h2>
+<pre>## 19–21. Strategy selection and optional grouped cross-validation</pre>
+</section>
+<section class='cell'><h2>Cell 24 — code</h2>
+<details><summary>Code</summary><pre>cv_results=[]
+if RUN_CROSS_VALIDATION and not QUICK_MODE:
+    sgkf=StratifiedGroupKFold(n_splits=CV_FOLDS,shuffle=True,random_state=SEED)
+    for fold,(ti,vi) in enumerate(sgkf.split(index,index.class_label,groups=index.fish_id),1):
+        tf.keras.backend.clear_session(); m,b=build_classifier(BEST_BACKBONE); m.compile(tf.keras.optimizers.Adam(3e-4),loss=&quot;sparse_categorical_crossentropy&quot;)
+        trf=index.iloc[ti].reset_index(drop=True); vaf=index.iloc[vi].reset_index(drop=True); trds=classification_ds(make_ds(trf,True)); vads=classification_ds(make_ds(vaf))
+        m.fit(trds,epochs=HEAD_EPOCHS,verbose=0); prob=m.predict(vads,verbose=0); pred=prob.argmax(1); y=vaf.class_label.values; rec=precision_recall_fscore_support(y,pred,labels=[0,1,2],zero_division=0)[1]
+        cv_results.append({&quot;fold&quot;:fold,&quot;accuracy&quot;:accuracy_score(y,pred),&quot;balanced_accuracy&quot;:balanced_accuracy_score(y,pred),&quot;macro_f1&quot;:precision_recall_fscore_support(y,pred,average=&quot;macro&quot;,zero_division=0)[2],&quot;juvenile_recall&quot;:rec[1]})
+    pd.DataFrame(cv_results).to_csv(OUTPUTS/&quot;reports/grouped_cross_validation.csv&quot;,index=False); display(pd.DataFrame(cv_results).agg([&quot;mean&quot;,&quot;std&quot;]))
+else: print(&quot;Grouped cross-validation disabled; set RUN_CROSS_VALIDATION=True for the optional 3-fold run.&quot;)
+</pre></details>
+<div class='output'>
+<pre>Grouped cross-validation disabled; set RUN_CROSS_VALIDATION=True for the optional 3-fold run.
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 25 — markdown</h2>
+<pre>## 22–24. Untouched test evaluation, fish aggregation, baselines, and grouped bootstrap CIs</pre>
+</section>
+<section class='cell'><h2>Cell 26 — code</h2>
+<details><summary>Code</summary><pre>def inverse_reg(z):
+    z=np.asarray(z); sl=sl_scaler.inverse_transform(z[:,[0]])[:,0]; tl=tl_scaler.inverse_transform(z[:,[1]])[:,0]; wt=np.expm1(weight_scaler.inverse_transform(z[:,[2]])[:,0]); return np.c_[sl,tl,wt]
+def metric_dict(y,p):
+    pr,re,f1,_=precision_recall_fscore_support(y,p,labels=[0,1,2],zero_division=0)
+    return {&quot;accuracy&quot;:accuracy_score(y,p),&quot;balanced_accuracy&quot;:balanced_accuracy_score(y,p),&quot;macro_precision&quot;:pr.mean(),&quot;macro_recall&quot;:re.mean(),&quot;macro_f1&quot;:f1.mean(),&quot;weighted_f1&quot;:precision_recall_fscore_support(y,p,average=&quot;weighted&quot;,zero_division=0)[2],&quot;juvenile_recall&quot;:re[1]}
+
+final_model=tf.keras.models.load_model(MULTI_PATH if RUN_MULTITASK else BEST_CLASS_MODEL,compile=False)
+tds=make_ds(test,path_col=BEST_PATH_COL); raw=final_model.predict(tds,verbose=0)
+if RUN_MULTITASK:
+    prob=raw[0]; reg_scaled=np.c_[np.ravel(raw[1]),np.ravel(raw[2]),np.ravel(raw[3])]; reg_pred=inverse_reg(reg_scaled)
+else: prob=raw; reg_pred=np.full((len(test),3),np.nan)
+pred=prob.argmax(1); image_metrics=metric_dict(test.class_label.values,pred)
+pred_df=test.copy(); pred_df[&quot;predicted_label&quot;]=pred; pred_df[&quot;confidence&quot;]=prob.max(1)
+for i,n in enumerate(CLASS_NAMES): pred_df[f&quot;prob_{n.lower()}&quot;]=prob[:,i]
+for i,n in enumerate(TARGETS): pred_df[f&quot;pred_{n}&quot;]=reg_pred[:,i]
+fish_pred=pred_df.groupby(&quot;fish_id&quot;,as_index=False).agg(class_label=(&quot;class_label&quot;,&quot;first&quot;),class_name=(&quot;class_name&quot;,&quot;first&quot;),SL_cm=(&quot;SL_cm&quot;,&quot;first&quot;),TL_cm=(&quot;TL_cm&quot;,&quot;first&quot;),Weight_g=(&quot;Weight_g&quot;,&quot;first&quot;),**{f&quot;prob_{n.lower()}&quot;:(f&quot;prob_{n.lower()}&quot;,&quot;mean&quot;) for n in CLASS_NAMES},**{f&quot;pred_{n}&quot;:(f&quot;pred_{n}&quot;,&quot;mean&quot;) for n in TARGETS})
+fp=fish_pred[[f&quot;prob_{n.lower()}&quot; for n in CLASS_NAMES]].values; fish_pred[&quot;predicted_label&quot;]=fp.argmax(1); fish_metrics=metric_dict(fish_pred.class_label.values,fish_pred.predicted_label.values)
+
+def regression_report(frame):
+    out={}
+    for n in TARGETS:
+        y=frame[n].values; p=frame[f&quot;pred_{n}&quot;].values; out[n]={&quot;MAE&quot;:mean_absolute_error(y,p),&quot;RMSE&quot;:mean_squared_error(y,p)**.5,&quot;R2&quot;:r2_score(y,p),&quot;MAPE&quot;:float(np.mean(np.abs((y-p)/y))*100)}
+    return out
+reg_metrics=regression_report(fish_pred) if RUN_MULTITASK else {}
+# Independent baselines fitted only on training fish.
+train_fish=train.drop_duplicates(&quot;fish_id&quot;); global_mean=train_fish[TARGETS].mean(); class_means=train_fish.groupby(&quot;class_label&quot;)[TARGETS].mean()
+baseline_global={n:mean_absolute_error(fish_pred[n],np.repeat(global_mean[n],len(fish_pred))) for n in TARGETS}
+baseline_class={n:mean_absolute_error(fish_pred[n],[class_means.loc[c,n] for c in fish_pred.class_label]) for n in TARGETS}
+regression_beats_baseline=bool(reg_metrics) and all(reg_metrics[n][&quot;MAE&quot;]&lt;baseline_class[n] for n in TARGETS)
+
+def grouped_bootstrap(frame,n_boot=1000):
+    rng=np.random.default_rng(SEED); ids=frame.fish_id.unique(); vals=[]
+    for _ in range(n_boot):
+        chosen=rng.choice(ids,len(ids),replace=True); b=pd.concat([frame[frame.fish_id==x] for x in chosen],ignore_index=True)
+        m=metric_dict(b.class_label,b.predicted_label); row={&quot;accuracy&quot;:m[&quot;accuracy&quot;],&quot;macro_f1&quot;:m[&quot;macro_f1&quot;],&quot;juvenile_recall&quot;:m[&quot;juvenile_recall&quot;]}
+        if RUN_MULTITASK:
+            for n in TARGETS: row[f&quot;{n}_MAE&quot;]=mean_absolute_error(b[n],b[f&quot;pred_{n}&quot;])
+        vals.append(row)
+    d=pd.DataFrame(vals); return {c:[float(x) for x in np.percentile(d[c],[2.5,97.5])] for c in d}
+cis=grouped_bootstrap(fish_pred)
+pred_df.to_csv(OUTPUTS/&quot;predictions/test_image_predictions.csv&quot;,index=False); fish_pred.to_csv(OUTPUTS/&quot;predictions/test_fish_predictions.csv&quot;,index=False)
+report=classification_report(fish_pred.class_label,fish_pred.predicted_label,target_names=CLASS_NAMES,output_dict=True,zero_division=0); json.dump(report,open(OUTPUTS/&quot;reports/classification_report.json&quot;,&quot;w&quot;),indent=2)
+json.dump(reg_metrics,open(OUTPUTS/&quot;reports/regression_report.json&quot;,&quot;w&quot;),indent=2)
+print(&quot;Image-level:&quot;,image_metrics,&quot;\nFish-level:&quot;,fish_metrics,&quot;\nRegression:&quot;,reg_metrics,&quot;\n95% fish bootstrap CIs:&quot;,cis,&quot;\nBaselines:&quot;,baseline_global,baseline_class)
+</pre></details>
+<div class='output'>
+<pre>Image-level: {&#x27;accuracy&#x27;: 0.8245614035087719, &#x27;balanced_accuracy&#x27;: np.float64(0.8018518518518518), &#x27;macro_precision&#x27;: np.float64(0.839326326141742), &#x27;macro_recall&#x27;: np.float64(0.8018518518518518), &#x27;macro_f1&#x27;: np.float64(0.8122606952795633), &#x27;weighted_f1&#x27;: 0.8204611674323691, &#x27;juvenile_recall&#x27;: np.float64(0.9166666666666666)} 
+Fish-level: {&#x27;accuracy&#x27;: 0.9473684210526315, &#x27;balanced_accuracy&#x27;: np.float64(0.9333333333333332), &#x27;macro_precision&#x27;: np.float64(0.9629629629629629), &#x27;macro_recall&#x27;: np.float64(0.9333333333333332), &#x27;macro_f1&#x27;: np.float64(0.943355119825708), &#x27;weighted_f1&#x27;: 0.9459924320605435, &#x27;juvenile_recall&#x27;: np.float64(1.0)} 
+Regression: {&#x27;SL_cm&#x27;: {&#x27;MAE&#x27;: 11.235527921977797, &#x27;RMSE&#x27;: 14.104121878954505, &#x27;R2&#x27;: 0.285676424566491, &#x27;MAPE&#x27;: 64.49271848143754}, &#x27;TL_cm&#x27;: {&#x27;MAE&#x27;: 15.636325936568408, &#x27;RMSE&#x27;: 17.45385930896405, &#x27;R2&#x27;: 0.16260601494006977, &#x27;MAPE&#x27;: 94.39642479811798}, &#x27;Weight_g&#x27;: {&#x27;MAE&#x27;: 285.03227649487945, &#x27;RMSE&#x27;: 519.3291374321101, &#x27;R2&#x27;: -0.15550503785140068, &#x27;MAPE&#x27;: 281.29833464137135}} 
+95% fish bootstrap CIs: {&#x27;accuracy&#x27;: [0.8421052631578947, 1.0], &#x27;macro_f1&#x27;: [0.7592592592592592, 1.0], &#x27;juvenile_recall&#x27;: [1.0, 1.0], &#x27;SL_cm_MAE&#x27;: [7.4980490850147445, 15.25410095917551], &#x27;TL_cm_MAE&#x27;: [12.273088009482937, 19.2664793305648], &#x27;Weight_g_MAE&#x27;: [87.50100285329316, 491.17457999982327]} 
+Baselines: {&#x27;SL_cm&#x27;: 14.781871345029243, &#x27;TL_cm&#x27;: 16.96081871345029, &#x27;Weight_g&#x27;: 425.2631578947369} {&#x27;SL_cm&#x27;: 1.3468479382599725, &#x27;TL_cm&#x27;: 1.4345133934580694, &#x27;Weight_g&#x27;: 32.490934176874404}
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 27 — markdown</h2>
+<pre>## 22–23. Diagnostic plots and class-specific regression</pre>
+</section>
+<section class='cell'><h2>Cell 28 — code</h2>
+<details><summary>Code</summary><pre>cm=confusion_matrix(fish_pred.class_label,fish_pred.predicted_label,labels=[0,1,2]); cmn=cm/cm.sum(1,keepdims=True)
+fig,ax=plt.subplots(1,2,figsize=(11,4)); sns.heatmap(cm,annot=True,fmt=&quot;d&quot;,xticklabels=CLASS_NAMES,yticklabels=CLASS_NAMES,ax=ax[0]); sns.heatmap(cmn,annot=True,fmt=&quot;.2f&quot;,xticklabels=CLASS_NAMES,yticklabels=CLASS_NAMES,ax=ax[1]); plt.tight_layout(); plt.savefig(OUTPUTS/&quot;figures/confusion_matrices.png&quot;,dpi=170); plt.show()
+fig,ax=plt.subplots(1,2,figsize=(12,4))
+for i,n in enumerate(CLASS_NAMES):
+    y=(fish_pred.class_label.values==i).astype(int); fpr,tpr,_=roc_curve(y,fp[:,i]); prec,rec,_=precision_recall_curve(y,fp[:,i]); ax[0].plot(fpr,tpr,label=f&quot;{n} AUC={roc_auc_score(y,fp[:,i]):.2f}&quot;); ax[1].plot(rec,prec,label=f&quot;{n} AP={average_precision_score(y,fp[:,i]):.2f}&quot;)
+for a in ax:a.legend();a.grid(alpha=.2)
+plt.savefig(OUTPUTS/&quot;figures/roc_pr_curves.png&quot;,dpi=170); plt.show()
+sns.histplot(data=pred_df,x=&quot;confidence&quot;,hue=(pred_df.predicted_label==pred_df.class_label)); plt.savefig(OUTPUTS/&quot;figures/confidence_distribution.png&quot;,dpi=170); plt.show()
+if RUN_MULTITASK:
+    fig,ax=plt.subplots(2,3,figsize=(15,9))
+    for i,n in enumerate(TARGETS):
+        sns.scatterplot(data=fish_pred,x=n,y=f&quot;pred_{n}&quot;,hue=&quot;class_name&quot;,ax=ax[0,i]); lo=min(fish_pred[n].min(),fish_pred[f&quot;pred_{n}&quot;].min()); hi=max(fish_pred[n].max(),fish_pred[f&quot;pred_{n}&quot;].max()); ax[0,i].plot([lo,hi],[lo,hi],&quot;k--&quot;)
+        resid=fish_pred[f&quot;pred_{n}&quot;]-fish_pred[n]; sns.scatterplot(x=fish_pred[f&quot;pred_{n}&quot;],y=resid,hue=fish_pred.class_name,ax=ax[1,i],legend=False); ax[1,i].axhline(0,color=&quot;k&quot;,ls=&quot;--&quot;)
+    plt.tight_layout(); plt.savefig(OUTPUTS/&quot;figures/regression_diagnostics.png&quot;,dpi=170); plt.show()
+    by_class=[]
+    for cls,g in fish_pred.groupby(&quot;class_name&quot;):
+        for n in TARGETS: by_class.append({&quot;class_name&quot;:cls,&quot;target&quot;:n,&quot;MAE&quot;:mean_absolute_error(g[n],g[f&quot;pred_{n}&quot;]),&quot;RMSE&quot;:mean_squared_error(g[n],g[f&quot;pred_{n}&quot;])**.5})
+    pd.DataFrame(by_class).to_csv(OUTPUTS/&quot;reports/regression_by_class.csv&quot;,index=False); display(pd.DataFrame(by_class))
+display(pred_df[pred_df.predicted_label!=pred_df.class_label].sort_values(&quot;confidence&quot;,ascending=False).head(12)[[&quot;fish_id&quot;,&quot;filename&quot;,&quot;class_name&quot;,&quot;predicted_label&quot;,&quot;confidence&quot;]])
+</pre></details>
+<div class='output'>
+<img src='images/cell_28_image_08.png' alt='Notebook output from cell 28'>
+</div>
+<div class='output'>
+<img src='images/cell_28_image_09.png' alt='Notebook output from cell 28'>
+</div>
+<div class='output'>
+<img src='images/cell_28_image_10.png' alt='Notebook output from cell 28'>
+</div>
+<div class='output'>
+<img src='images/cell_28_image_11.png' alt='Notebook output from cell 28'>
+</div>
+<div class='output'>
+
+  <div id="df-e1dd6e8d-cb3a-4e0b-9faa-a56f7bb2119d" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>class_name</th>
+      <th>target</th>
+      <th>MAE</th>
+      <th>RMSE</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>adult</td>
+      <td>SL_cm</td>
+      <td>25.076882</td>
+      <td>25.135243</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>adult</td>
+      <td>TL_cm</td>
+      <td>27.925763</td>
+      <td>28.007292</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>adult</td>
+      <td>Weight_g</td>
+      <td>1003.444646</td>
+      <td>1011.124087</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>fingerling</td>
+      <td>SL_cm</td>
+      <td>7.187765</td>
+      <td>7.233035</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>fingerling</td>
+      <td>TL_cm</td>
+      <td>13.449150</td>
+      <td>13.464467</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>fingerling</td>
+      <td>Weight_g</td>
+      <td>33.455094</td>
+      <td>34.033217</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>juvenile</td>
+      <td>SL_cm</td>
+      <td>5.620504</td>
+      <td>6.192696</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>juvenile</td>
+      <td>TL_cm</td>
+      <td>9.595810</td>
+      <td>9.863530</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>juvenile</td>
+      <td>Weight_g</td>
+      <td>24.707432</td>
+      <td>26.322870</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-e1dd6e8d-cb3a-4e0b-9faa-a56f7bb2119d')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-e1dd6e8d-cb3a-4e0b-9faa-a56f7bb2119d button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-e1dd6e8d-cb3a-4e0b-9faa-a56f7bb2119d');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+
+</div>
+<div class='output'>
+
+  <div id="df-5dd640bc-8dd1-46c9-a7a5-7fd44b6205fe" class="colab-df-container">
+    <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>fish_id</th>
+      <th>filename</th>
+      <th>class_name</th>
+      <th>predicted_label</th>
+      <th>confidence</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>5</th>
+      <td>adult_020</td>
+      <td>_03.JPG</td>
+      <td>adult</td>
+      <td>1</td>
+      <td>0.658463</td>
+    </tr>
+    <tr>
+      <th>26</th>
+      <td>fingerling_009</td>
+      <td>_03.png</td>
+      <td>fingerling</td>
+      <td>1</td>
+      <td>0.606683</td>
+    </tr>
+    <tr>
+      <th>0</th>
+      <td>adult_015</td>
+      <td>_01.png</td>
+      <td>adult</td>
+      <td>1</td>
+      <td>0.560857</td>
+    </tr>
+    <tr>
+      <th>47</th>
+      <td>juvenile_032</td>
+      <td>_03.png</td>
+      <td>juvenile</td>
+      <td>0</td>
+      <td>0.530692</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>adult_024</td>
+      <td>_02.png</td>
+      <td>adult</td>
+      <td>1</td>
+      <td>0.526624</td>
+    </tr>
+    <tr>
+      <th>11</th>
+      <td>adult_029</td>
+      <td>_03.png</td>
+      <td>adult</td>
+      <td>1</td>
+      <td>0.516468</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>adult_020</td>
+      <td>_02.png</td>
+      <td>adult</td>
+      <td>1</td>
+      <td>0.466401</td>
+    </tr>
+    <tr>
+      <th>14</th>
+      <td>adult_030</td>
+      <td>_03.png</td>
+      <td>adult</td>
+      <td>1</td>
+      <td>0.424497</td>
+    </tr>
+    <tr>
+      <th>51</th>
+      <td>juvenile_043</td>
+      <td>_01.png</td>
+      <td>juvenile</td>
+      <td>2</td>
+      <td>0.409743</td>
+    </tr>
+    <tr>
+      <th>32</th>
+      <td>fingerling_033</td>
+      <td>_03.png</td>
+      <td>fingerling</td>
+      <td>2</td>
+      <td>0.383114</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+    <div class="colab-df-buttons">
+
+  <div class="colab-df-container">
+    <button class="colab-df-convert" onclick="convertToInteractive('df-5dd640bc-8dd1-46c9-a7a5-7fd44b6205fe')"
+            title="Convert this dataframe to an interactive table."
+            style="display:none;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960">
+    <path d="M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z"/>
+  </svg>
+    </button>
+
+  <style>
+    .colab-df-container {
+      display:flex;
+      gap: 12px;
+    }
+
+    .colab-df-convert {
+      background-color: #E8F0FE;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      fill: #1967D2;
+      height: 32px;
+      padding: 0 0 0 0;
+      width: 32px;
+    }
+
+    .colab-df-convert:hover {
+      background-color: #E2EBFA;
+      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);
+      fill: #174EA6;
+    }
+
+    .colab-df-buttons div {
+      margin-bottom: 4px;
+    }
+
+    [theme=dark] .colab-df-convert {
+      background-color: #3B4455;
+      fill: #D2E3FC;
+    }
+
+    [theme=dark] .colab-df-convert:hover {
+      background-color: #434B5C;
+      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));
+      fill: #FFFFFF;
+    }
+  </style>
+
+    <script>
+      const buttonEl =
+        document.querySelector('#df-5dd640bc-8dd1-46c9-a7a5-7fd44b6205fe button.colab-df-convert');
+      buttonEl.style.display =
+        google.colab.kernel.accessAllowed ? 'block' : 'none';
+
+      async function convertToInteractive(key) {
+        const element = document.querySelector('#df-5dd640bc-8dd1-46c9-a7a5-7fd44b6205fe');
+        const dataTable =
+          await google.colab.kernel.invokeFunction('convertToInteractive',
+                                                    [key], {});
+        if (!dataTable) return;
+
+        const docLinkHtml = 'Like what you see? Visit the ' +
+          '<a target="_blank" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'
+          + ' to learn more about interactive tables.';
+        element.innerHTML = '';
+        dataTable['output_type'] = 'display_data';
+        await google.colab.output.renderOutput(dataTable, element);
+        const docLink = document.createElement('div');
+        docLink.innerHTML = docLinkHtml;
+        element.appendChild(docLink);
+      }
+    </script>
+  </div>
+
+
+    </div>
+  </div>
+
+</div>
+</section>
+<section class='cell'><h2>Cell 29 — markdown</h2>
+<pre>## 25. Grad-CAM explainability</pre>
+</section>
+<section class='cell'><h2>Cell 30 — code</h2>
+<details><summary>Code</summary><pre>import cv2
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import matplotlib.pyplot as plt
+
+from pathlib import Path
+from PIL import Image
+
+
+def resolve_image_path(path_value):
+    &quot;&quot;&quot;
+    Validate and resolve an image path stored in pred_df.
+    &quot;&quot;&quot;
+    image_path = Path(str(path_value))
+
+    if image_path.exists():
+        return image_path
+
+    # Try resolving relative paths from /content.
+    colab_path = Path(&quot;/content&quot;) / str(path_value)
+
+    if colab_path.exists():
+        return colab_path
+
+    raise FileNotFoundError(
+        f&quot;Image does not exist.\n&quot;
+        f&quot;Original path: {path_value}\n&quot;
+        f&quot;Checked: {image_path}\n&quot;
+        f&quot;Checked: {colab_path}&quot;
+    )
+
+
+def get_class_output_tensor(model):
+    &quot;&quot;&quot;
+    Identify the classification output safely.
+    &quot;&quot;&quot;
+
+    if isinstance(model.output, dict):
+        if &quot;class_output&quot; in model.output:
+            return model.output[&quot;class_output&quot;]
+
+        raise ValueError(
+            &quot;The model output is a dictionary, but class_output &quot;
+            &quot;was not found.&quot;
+        )
+
+    if isinstance(model.output, (list, tuple)):
+        output_names = list(model.output_names)
+
+        if &quot;class_output&quot; in output_names:
+            index = output_names.index(&quot;class_output&quot;)
+            return model.output[index]
+
+        for tensor in model.output:
+            shape = tensor.shape
+
+            if (
+                len(shape) == 2
+                and shape[-1] is not None
+                and int(shape[-1]) == len(CLASS_NAMES)
+            ):
+                return tensor
+
+        raise ValueError(
+            &quot;Could not identify the classification output. &quot;
+            f&quot;Available outputs: {output_names}&quot;
+        )
+
+    return model.output
+
+
+def collect_conv_layers(layer, prefix=&quot;&quot;):
+    &quot;&quot;&quot;
+    Recursively collect Conv2D-like layers from both flattened and
+    nested Keras models without using next().
+    &quot;&quot;&quot;
+    collected = []
+
+    if isinstance(
+        layer,
+        (
+            tf.keras.layers.Conv2D,
+            tf.keras.layers.DepthwiseConv2D,
+            tf.keras.layers.SeparableConv2D,
+        )
+    ):
+        output_shape = getattr(layer.output, &quot;shape&quot;, None)
+
+        if output_shape is not None and len(output_shape) == 4:
+            collected.append(
+                {
+                    &quot;layer&quot;: layer,
+                    &quot;name&quot;: f&quot;{prefix}{layer.name}&quot;,
+                    &quot;nested&quot;: bool(prefix)
+                }
+            )
+
+    if isinstance(layer, tf.keras.Model):
+        nested_prefix = f&quot;{prefix}{layer.name}/&quot;
+
+        for child_layer in layer.layers:
+            collected.extend(
+                collect_conv_layers(
+                    child_layer,
+                    prefix=nested_prefix
+                )
+            )
+
+    return collected
+
+
+def find_gradcam_layer(model, preferred_names=None):
+    &quot;&quot;&quot;
+    Select a suitable convolutional layer.
+
+    Prefer layers with useful spatial dimensions instead of blindly
+    selecting the final convolution.
+    &quot;&quot;&quot;
+    preferred_names = preferred_names or [
+        &quot;block7a_project_conv&quot;,
+        &quot;block6d_project_conv&quot;,
+        &quot;block6c_project_conv&quot;,
+        &quot;top_conv&quot;
+    ]
+
+    candidates = []
+
+    for layer in model.layers:
+        candidates.extend(
+            collect_conv_layers(layer)
+        )
+
+    if not candidates:
+        raise RuntimeError(
+            &quot;No convolutional feature layer was found in the model.&quot;
+        )
+
+    # First try preferred EfficientNet layers.
+    for preferred_name in preferred_names:
+        for candidate in candidates:
+            if candidate[&quot;layer&quot;].name == preferred_name:
+                return candidate
+
+    # Prefer a late feature layer with a spatial output.
+    spatial_candidates = []
+
+    for candidate in candidates:
+        shape = candidate[&quot;layer&quot;].output.shape
+
+        if len(shape) != 4:
+            continue
+
+        height = shape[1]
+        width = shape[2]
+
+        if (
+            height is not None
+            and width is not None
+            and int(height) &gt;= 5
+            and int(width) &gt;= 5
+        ):
+            spatial_candidates.append(candidate)
+
+    if spatial_candidates:
+        return spatial_candidates[-1]
+
+    return candidates[-1]
+
+
+def prepare_gradcam_input(image_path):
+    &quot;&quot;&quot;
+    Use the same resize-with-padding procedure as the training pipeline.
+    &quot;&quot;&quot;
+    image_bytes = tf.io.read_file(str(image_path))
+
+    image = tf.io.decode_image(
+        image_bytes,
+        channels=3,
+        expand_animations=False
+    )
+
+    image = tf.image.resize_with_pad(
+        image,
+        IMAGE_SIZE,
+        IMAGE_SIZE
+    )
+
+    image = tf.cast(image, tf.float32)
+
+    image.set_shape([
+        IMAGE_SIZE,
+        IMAGE_SIZE,
+        3
+    ])
+
+    return image[None, ...]
+
+
+def build_flat_gradcam_model(
+    model,
+    target_layer,
+    class_output
+):
+    &quot;&quot;&quot;
+    Build Grad-CAM for a convolutional layer directly connected to
+    the outer model graph.
+    &quot;&quot;&quot;
+    return tf.keras.Model(
+        inputs=model.inputs,
+        outputs=[
+            target_layer.output,
+            class_output
+        ],
+        name=&quot;flat_gradcam_model&quot;
+    )
+
+
+def build_nested_gradcam_models(
+    model,
+    nested_model,
+    target_layer,
+    class_output
+):
+    &quot;&quot;&quot;
+    Handle a backbone stored as a nested Keras model.
+    &quot;&quot;&quot;
+    feature_extractor = tf.keras.Model(
+        inputs=nested_model.inputs,
+        outputs=[
+            target_layer.output,
+            nested_model.output
+        ],
+        name=&quot;nested_feature_extractor&quot;
+    )
+
+    nested_index = model.layers.index(nested_model)
+
+    head_input = tf.keras.Input(
+        shape=nested_model.output.shape[1:],
+        name=&quot;gradcam_head_input&quot;
+    )
+
+    x = head_input
+
+    for layer in model.layers[nested_index + 1:]:
+        x = layer(x, training=False)
+
+    head_model = tf.keras.Model(
+        head_input,
+        x,
+        name=&quot;gradcam_head_model&quot;
+    )
+
+    return feature_extractor, head_model
+
+
+def make_gradcam_heatmap(
+    model,
+    image_path,
+    class_index=None,
+    preferred_layer_names=None
+):
+    image_path = resolve_image_path(image_path)
+    input_array = prepare_gradcam_input(image_path)
+
+    class_output = get_class_output_tensor(model)
+
+    selected = find_gradcam_layer(
+        model,
+        preferred_names=preferred_layer_names
+    )
+
+    target_layer = selected[&quot;layer&quot;]
+
+    print(
+        &quot;Grad-CAM target layer:&quot;,
+        selected[&quot;name&quot;],
+        &quot;| output shape:&quot;,
+        target_layer.output.shape
+    )
+
+    # Find whether the selected layer belongs to a nested model.
+    parent_model = None
+
+    for outer_layer in model.layers:
+        if not isinstance(outer_layer, tf.keras.Model):
+            continue
+
+        if target_layer in outer_layer.layers:
+            parent_model = outer_layer
+            break
+
+    if parent_model is None:
+        # Flattened model.
+        grad_model = build_flat_gradcam_model(
+            model,
+            target_layer,
+            class_output
+        )
+
+        with tf.GradientTape() as tape:
+            feature_maps, predictions = grad_model(
+                input_array,
+                training=False
+            )
+
+            if isinstance(predictions, dict):
+                predictions = predictions[&quot;class_output&quot;]
+
+            if isinstance(predictions, (list, tuple)):
+                predictions = predictions[0]
+
+            if class_index is None:
+                class_index = int(
+                    tf.argmax(predictions[0]).numpy()
+                )
+
+            score = predictions[:, class_index]
+
+    else:
+        # Nested backbone model.
+        feature_extractor, head_model = (
+            build_nested_gradcam_models(
+                model=model,
+                nested_model=parent_model,
+                target_layer=target_layer,
+                class_output=class_output
+            )
+        )
+
+        # Pass input through layers before the nested backbone.
+        x = input_array
+        nested_index = model.layers.index(parent_model)
+
+        for layer in model.layers[1:nested_index]:
+            x = layer(x, training=False)
+
+        with tf.GradientTape() as tape:
+            feature_maps, backbone_output = feature_extractor(
+                x,
+                training=False
+            )
+
+            tape.watch(feature_maps)
+
+            predictions = head_model(
+                backbone_output,
+                training=False
+            )
+
+            if isinstance(predictions, dict):
+                predictions = predictions[&quot;class_output&quot;]
+
+            if isinstance(predictions, (list, tuple)):
+                predictions = predictions[0]
+
+            if class_index is None:
+                class_index = int(
+                    tf.argmax(predictions[0]).numpy()
+                )
+
+            score = predictions[:, class_index]
+
+    gradients = tape.gradient(
+        score,
+        feature_maps
+    )
+
+    if gradients is None:
+        raise RuntimeError(
+            f&quot;No gradients were produced for layer &quot;
+            f&quot;&#x27;{selected[&#x27;name&#x27;]}&#x27;. Try an earlier convolutional layer.&quot;
+        )
+
+    pooled_gradients = tf.reduce_mean(
+        gradients,
+        axis=(0, 1, 2)
+    )
+
+    feature_maps = feature_maps[0]
+
+    heatmap = tf.reduce_sum(
+        feature_maps
+        * pooled_gradients[None, None, :],
+        axis=-1
+    )
+
+    heatmap = tf.nn.relu(heatmap)
+
+    heatmap_max = tf.reduce_max(heatmap)
+
+    if float(heatmap_max) &gt; 0:
+        heatmap = heatmap / heatmap_max
+
+    return {
+        &quot;heatmap&quot;: heatmap.numpy(),
+        &quot;class_index&quot;: int(class_index),
+        &quot;layer_name&quot;: selected[&quot;name&quot;],
+        &quot;predictions&quot;: predictions[0].numpy()
+    }
+
+
+def create_gradcam_overlay(
+    image_path,
+    heatmap,
+    alpha=0.40
+):
+    image_path = resolve_image_path(image_path)
+
+    raw_bgr = cv2.imread(str(image_path))
+
+    if raw_bgr is None:
+        raise ValueError(
+            f&quot;OpenCV could not decode image: {image_path}&quot;
+        )
+
+    raw_rgb = cv2.cvtColor(
+        raw_bgr,
+        cv2.COLOR_BGR2RGB
+    )
+
+    resized_heatmap = cv2.resize(
+        heatmap,
+        (
+            raw_rgb.shape[1],
+            raw_rgb.shape[0]
+        )
+    )
+
+    resized_heatmap = np.uint8(
+        np.clip(
+            resized_heatmap,
+            0,
+            1
+        ) * 255
+    )
+
+    coloured_heatmap = cv2.applyColorMap(
+        resized_heatmap,
+        cv2.COLORMAP_JET
+    )
+
+    coloured_heatmap = cv2.cvtColor(
+        coloured_heatmap,
+        cv2.COLOR_BGR2RGB
+    )
+
+    overlay = cv2.addWeighted(
+        raw_rgb,
+        1.0 - alpha,
+        coloured_heatmap,
+        alpha,
+        0
+    )
+
+    return overlay
+
+
+def gradcam(
+    model,
+    image_path,
+    class_index=None,
+    preferred_layer_names=None
+):
+    result = make_gradcam_heatmap(
+        model=model,
+        image_path=image_path,
+        class_index=class_index,
+        preferred_layer_names=preferred_layer_names
+    )
+
+    overlay = create_gradcam_overlay(
+        image_path=image_path,
+        heatmap=result[&quot;heatmap&quot;]
+    )
+
+    return overlay, result
+
+
+print(&quot;Corrected Grad-CAM functions loaded.&quot;)</pre></details>
+<div class='output'>
+<pre>Corrected Grad-CAM functions loaded.
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 31 — code</h2>
+<details><summary>Code</summary><pre>if RUN_GRADCAM:
+    correct_examples = (
+        pred_df[
+            pred_df[&quot;predicted_label&quot;]
+            == pred_df[&quot;class_label&quot;]
+        ]
+        .groupby(
+            &quot;class_name&quot;,
+            group_keys=False
+        )
+        .head(1)
+    )
+
+    incorrect_examples = (
+        pred_df[
+            pred_df[&quot;predicted_label&quot;]
+            != pred_df[&quot;class_label&quot;]
+        ]
+        .sort_values(
+            &quot;confidence&quot;,
+            ascending=False
+        )
+        .head(3)
+    )
+
+    examples = (
+        pd.concat(
+            [
+                correct_examples,
+                incorrect_examples
+            ],
+            ignore_index=True
+        )
+        .drop_duplicates(
+            subset=BEST_PATH_COL
+        )
+    )
+
+    if examples.empty:
+        print(&quot;No Grad-CAM examples were available.&quot;)
+
+    else:
+        rows = len(examples)
+
+        figure, axes = plt.subplots(
+            rows,
+            2,
+            figsize=(10, 4 * rows),
+            squeeze=False
+        )
+
+        success_count = 0
+
+        for plot_index, (_, row) in enumerate(
+            examples.iterrows()
+        ):
+            raw_axis = axes[plot_index, 0]
+            cam_axis = axes[plot_index, 1]
+
+            try:
+                image_path = resolve_image_path(
+                    row[BEST_PATH_COL]
+                )
+
+                original = Image.open(
+                    image_path
+                ).convert(&quot;RGB&quot;)
+
+                raw_axis.imshow(original)
+
+                predicted_index = int(
+                    row[&quot;predicted_label&quot;]
+                )
+
+                predicted_name = CLASS_NAMES[
+                    predicted_index
+                ]
+
+                raw_axis.set_title(
+                    f&quot;Actual: {row[&#x27;class_name&#x27;]}\n&quot;
+                    f&quot;Predicted: {predicted_name} &quot;
+                    f&quot;({float(row[&#x27;confidence&#x27;]):.1%})&quot;
+                )
+
+            except Exception as image_error:
+                image_path = None
+
+                raw_axis.text(
+                    0.5,
+                    0.5,
+                    &quot;Image loading failed:\n&quot;
+                    f&quot;{type(image_error).__name__}\n&quot;
+                    f&quot;{image_error}&quot;,
+                    ha=&quot;center&quot;,
+                    va=&quot;center&quot;,
+                    wrap=True
+                )
+
+            if image_path is not None:
+                try:
+                    overlay, result = gradcam(
+                        model=final_model,
+                        image_path=image_path,
+                        class_index=predicted_index,
+                        preferred_layer_names=[
+                            &quot;block7a_project_conv&quot;,
+                            &quot;block6d_project_conv&quot;,
+                            &quot;block6c_project_conv&quot;,
+                            &quot;top_conv&quot;
+                        ]
+                    )
+
+                    cam_axis.imshow(overlay)
+
+                    cam_axis.set_title(
+                        &quot;Grad-CAM\n&quot;
+                        f&quot;Layer: {result[&#x27;layer_name&#x27;]}&quot;
+                    )
+
+                    success_count += 1
+
+                except Exception as gradcam_error:
+                    cam_axis.text(
+                        0.5,
+                        0.5,
+                        &quot;Grad-CAM failed:\n&quot;
+                        f&quot;{type(gradcam_error).__name__}\n&quot;
+                        f&quot;{gradcam_error}&quot;,
+                        ha=&quot;center&quot;,
+                        va=&quot;center&quot;,
+                        wrap=True
+                    )
+
+                    print(
+                        f&quot;Grad-CAM failure for {image_path}:&quot;,
+                        repr(gradcam_error)
+                    )
+
+            raw_axis.axis(&quot;off&quot;)
+            cam_axis.axis(&quot;off&quot;)
+
+        plt.tight_layout()
+
+        output_path = (
+            OUTPUTS
+            / &quot;explainability&quot;
+            / &quot;gradcam_examples.png&quot;
+        )
+
+        output_path.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        plt.savefig(
+            output_path,
+            dpi=170,
+            bbox_inches=&quot;tight&quot;
+        )
+
+        plt.show()
+
+        print(
+            f&quot;Successful Grad-CAM images: &quot;
+            f&quot;{success_count}/{rows}&quot;
+        )
+
+        print(
+            &quot;Saved to:&quot;,
+            output_path
+        )</pre></details>
+<div class='output'>
+<pre>Grad-CAM failure for /content/catfish_dataset/catfish_dataset/fish/adult/adult_015/_02.png: TypeError(&quot;gradcam() got an unexpected keyword argument &#x27;class_index&#x27;&quot;)
+Grad-CAM failure for /content/catfish_dataset/catfish_dataset/fish/fingerling/fingerlin_002/_01.png: TypeError(&quot;gradcam() got an unexpected keyword argument &#x27;class_index&#x27;&quot;)
+Grad-CAM failure for /content/catfish_dataset/catfish_dataset/fish/juvenile/juvenile_010/_01.png: TypeError(&quot;gradcam() got an unexpected keyword argument &#x27;class_index&#x27;&quot;)
+Grad-CAM failure for /content/catfish_dataset/catfish_dataset/fish/adult/adult_020/_03.JPG: TypeError(&quot;gradcam() got an unexpected keyword argument &#x27;class_index&#x27;&quot;)
+Grad-CAM failure for /content/catfish_dataset/catfish_dataset/fish/fingerling/fingerlin_009/_03.png: TypeError(&quot;gradcam() got an unexpected keyword argument &#x27;class_index&#x27;&quot;)
+Grad-CAM failure for /content/catfish_dataset/catfish_dataset/fish/adult/adult_015/_01.png: TypeError(&quot;gradcam() got an unexpected keyword argument &#x27;class_index&#x27;&quot;)
+</pre>
+</div>
+<div class='output'>
+<img src='images/cell_31_image_12.png' alt='Notebook output from cell 31'>
+</div>
+<div class='output'>
+<pre>Successful Grad-CAM images: 0/6
+Saved to: /content/outputs/explainability/gradcam_examples.png
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 32 — code</h2>
+<details><summary>Code</summary><pre>import inspect
+
+gradcam_source = inspect.getsource(gradcam)
+
+print(
+    &quot;Old nested next() still present:&quot;,
+    &quot;next(&quot; in gradcam_source
+)</pre></details>
+<div class='output'>
+<pre>Old nested next() still present: False
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 33 — markdown</h2>
+<pre>## 28–29. Production inference and saved-model reload verification</pre>
+</section>
+<section class='cell'><h2>Cell 34 — code</h2>
+<details><summary>Code</summary><pre>_MODEL_CACHE={}
+def predict_catfish(image_path,model_path=MULTI_PATH):
+    p=Path(image_path)
+    if not p.is_file(): raise FileNotFoundError(f&quot;Image not found: {p}&quot;)
+    try: img=Image.open(p).convert(&quot;RGB&quot;)
+    except Exception as e: raise ValueError(f&quot;Unreadable image {p}: {e}&quot;)
+    use_path=p
+    if BEST_PATH_COL==&quot;crop_path&quot;:
+        tmp=OUTPUTS/&quot;crops/inference_crop.png&quot;; conservative_crop(p,tmp); use_path=tmp
+    raw=tf.convert_to_tensor(np.asarray(Image.open(use_path).convert(&quot;RGB&quot;))); arr=tf.image.resize_with_pad(raw,IMAGE_SIZE,IMAGE_SIZE)[None]
+    key=str(model_path)
+    if key not in _MODEL_CACHE: _MODEL_CACHE[key]=tf.keras.models.load_model(model_path,compile=False)
+    out=_MODEL_CACHE[key].predict(arr,verbose=0); prob=np.asarray(out[0])[0]
+    z=np.array([[np.ravel(out[1])[0],np.ravel(out[2])[0],np.ravel(out[3])[0]]]); measures=inverse_reg(z)[0]; label=int(prob.argmax())
+    return {&quot;predicted_class&quot;:CLASS_NAMES[label],&quot;class_label&quot;:label,&quot;confidence&quot;:float(prob[label]),&quot;class_probabilities&quot;:{n:float(prob[i]) for i,n in enumerate(CLASS_NAMES)},&quot;SL_cm&quot;:float(measures[0]),&quot;TL_cm&quot;:float(measures[1]),&quot;Weight_g&quot;:float(measures[2])}
+
+before=np.asarray(final_model.predict(make_ds(test.head(3),path_col=BEST_PATH_COL),verbose=0)[0]); del final_model; tf.keras.backend.clear_session(); gc.collect(); _MODEL_CACHE.clear()
+reloaded=tf.keras.models.load_model(MULTI_PATH,compile=False); after=np.asarray(reloaded.predict(make_ds(test.head(3),path_col=BEST_PATH_COL),verbose=0)[0]); assert np.allclose(before,after,rtol=1e-5,atol=1e-6)
+print(&quot;Saved-model reload verified on three test images.&quot;)
+for p in test.head(3).image_path: print(predict_catfish(p))
+</pre></details>
+<div class='output'>
+<pre>Saved-model reload verified on three test images.
+{&#x27;predicted_class&#x27;: &#x27;Juvenile&#x27;, &#x27;class_label&#x27;: 1, &#x27;confidence&#x27;: 0.5608577132225037, &#x27;class_probabilities&#x27;: {&#x27;Fingerling&#x27;: 0.10182330757379532, &#x27;Juvenile&#x27;: 0.5608577132225037, &#x27;Adult&#x27;: 0.33731895685195923}, &#x27;SL_cm&#x27;: 23.41643714904785, &#x27;TL_cm&#x27;: 25.919967651367188, &#x27;Weight_g&#x27;: 76.10893249511719}
+{&#x27;predicted_class&#x27;: &#x27;Adult&#x27;, &#x27;class_label&#x27;: 2, &#x27;confidence&#x27;: 0.5148541927337646, &#x27;class_probabilities&#x27;: {&#x27;Fingerling&#x27;: 0.11228624731302261, &#x27;Juvenile&#x27;: 0.37285956740379333, &#x27;Adult&#x27;: 0.5148541927337646}, &#x27;SL_cm&#x27;: 25.354400634765625, &#x27;TL_cm&#x27;: 27.787893295288086, &#x27;Weight_g&#x27;: 109.33916473388672}
+{&#x27;predicted_class&#x27;: &#x27;Adult&#x27;, &#x27;class_label&#x27;: 2, &#x27;confidence&#x27;: 0.8213359713554382, &#x27;class_probabilities&#x27;: {&#x27;Fingerling&#x27;: 0.06557513028383255, &#x27;Juvenile&#x27;: 0.11308897286653519, &#x27;Adult&#x27;: 0.8213359713554382}, &#x27;SL_cm&#x27;: 23.88394546508789, &#x27;TL_cm&#x27;: 29.09282112121582, &#x27;Weight_g&#x27;: 127.24241638183594}
+</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 35 — markdown</h2>
+<pre>## 30–32. Final summary, Drive copy, and downloadable outputs</pre>
+</section>
+<section class='cell'><h2>Cell 36 — code</h2>
+<details><summary>Code</summary><pre>summary={&quot;images&quot;:len(index),&quot;independent_fish&quot;:index.fish_id.nunique(),&quot;class_images&quot;:index.class_name.value_counts().to_dict(),&quot;class_fish&quot;:index.groupby(&quot;class_name&quot;).fish_id.nunique().to_dict(),&quot;splits&quot;:{k:{&quot;images&quot;:len(v),&quot;fish&quot;:v.fish_id.nunique()} for k,v in splits.items()},&quot;fish_leakage&quot;:&quot;PASS: zero overlap&quot;,&quot;best_classification_backbone&quot;:str(BEST_BACKBONE),&quot;best_preprocessing&quot;:str(BEST_PATH_COL),&quot;best_imbalance_strategy&quot;:str(best_exp.balancing),&quot;best_validation_accuracy&quot;:float(best_exp.val_accuracy),&quot;best_validation_macro_f1&quot;:float(best_exp.val_macro_f1),&quot;validation_juvenile_recall&quot;:float(best_exp.juvenile_recall),&quot;image_test_metrics&quot;:image_metrics,&quot;fish_test_metrics&quot;:fish_metrics,&quot;fish_regression_metrics&quot;:reg_metrics,&quot;bootstrap_95pct_CI&quot;:cis,&quot;test_accuracy_exceeded_90pct&quot;:bool(fish_metrics[&quot;accuracy&quot;]&gt;.90),&quot;regression_beat_class_mean_baseline&quot;:regression_beats_baseline,&quot;limitations&quot;:[&quot;Only 117 independent fish&quot;,&quot;Absolute size may be confounded by camera distance/background/reference objects&quot;,&quot;Grouped test contains only 19 fish; confidence intervals may be wide&quot;]}
+json.dump(summary,open(OUTPUTS/&quot;reports/final_summary.json&quot;,&quot;w&quot;),indent=2); pd.json_normalize(summary).to_csv(OUTPUTS/&quot;reports/final_summary.csv&quot;,index=False)
+json.dump({str(v):k for k,v in CLASS_MAPPING.items()},open(OUTPUTS/&quot;models/class_mapping.json&quot;,&quot;w&quot;),indent=2)
+print(json.dumps(summary,indent=2)); print(&quot;Reminder: 357 images represent only 117 independent fish.&quot;)
+archive=shutil.make_archive(&quot;/content/catfish_multitask_outputs&quot;,&quot;zip&quot;,&quot;/content/outputs&quot;)
+if USE_GOOGLE_DRIVE:
+    dest=Path(&quot;/content/drive/MyDrive/catfish_multitask_outputs&quot;);
+    if dest.exists(): shutil.rmtree(dest)
+    shutil.copytree(OUTPUTS,dest); print(&quot;Copied outputs to&quot;,dest)
+else:
+    print(&quot;Output archive:&quot;,archive)
+    from google.colab import files
+    files.download(archive)
+</pre></details>
+<div class='output'>
+<pre>{
+  &quot;images&quot;: 357,
+  &quot;independent_fish&quot;: 117,
+  &quot;class_images&quot;: {
+    &quot;juvenile&quot;: 147,
+    &quot;fingerling&quot;: 106,
+    &quot;adult&quot;: 104
+  },
+  &quot;class_fish&quot;: {
+    &quot;adult&quot;: 33,
+    &quot;fingerling&quot;: 35,
+    &quot;juvenile&quot;: 49
+  },
+  &quot;splits&quot;: {
+    &quot;train&quot;: {
+      &quot;images&quot;: 249,
+      &quot;fish&quot;: 81
+    },
+    &quot;validation&quot;: {
+      &quot;images&quot;: 51,
+      &quot;fish&quot;: 17
+    },
+    &quot;test&quot;: {
+      &quot;images&quot;: 57,
+      &quot;fish&quot;: 19
+    }
+  },
+  &quot;fish_leakage&quot;: &quot;PASS: zero overlap&quot;,
+  &quot;best_classification_backbone&quot;: &quot;EfficientNetB0&quot;,
+  &quot;best_preprocessing&quot;: &quot;image_path&quot;,
+  &quot;best_imbalance_strategy&quot;: &quot;class_weights&quot;,
+  &quot;best_validation_accuracy&quot;: 0.9215686274509803,
+  &quot;best_validation_macro_f1&quot;: 0.9238095238095237,
+  &quot;validation_juvenile_recall&quot;: 0.9047619047619048,
+  &quot;image_test_metrics&quot;: {
+    &quot;accuracy&quot;: 0.8245614035087719,
+    &quot;balanced_accuracy&quot;: 0.8018518518518518,
+    &quot;macro_precision&quot;: 0.839326326141742,
+    &quot;macro_recall&quot;: 0.8018518518518518,
+    &quot;macro_f1&quot;: 0.8122606952795633,
+    &quot;weighted_f1&quot;: 0.8204611674323691,
+    &quot;juvenile_recall&quot;: 0.9166666666666666
+  },
+  &quot;fish_test_metrics&quot;: {
+    &quot;accuracy&quot;: 0.9473684210526315,
+    &quot;balanced_accuracy&quot;: 0.9333333333333332,
+    &quot;macro_precision&quot;: 0.9629629629629629,
+    &quot;macro_recall&quot;: 0.9333333333333332,
+    &quot;macro_f1&quot;: 0.943355119825708,
+    &quot;weighted_f1&quot;: 0.9459924320605435,
+    &quot;juvenile_recall&quot;: 1.0
+  },
+  &quot;fish_regression_metrics&quot;: {
+    &quot;SL_cm&quot;: {
+      &quot;MAE&quot;: 11.235527921977797,
+      &quot;RMSE&quot;: 14.104121878954505,
+      &quot;R2&quot;: 0.285676424566491,
+      &quot;MAPE&quot;: 64.49271848143754
+    },
+    &quot;TL_cm&quot;: {
+      &quot;MAE&quot;: 15.636325936568408,
+      &quot;RMSE&quot;: 17.45385930896405,
+      &quot;R2&quot;: 0.16260601494006977,
+      &quot;MAPE&quot;: 94.39642479811798
+    },
+    &quot;Weight_g&quot;: {
+      &quot;MAE&quot;: 285.03227649487945,
+      &quot;RMSE&quot;: 519.3291374321101,
+      &quot;R2&quot;: -0.15550503785140068,
+      &quot;MAPE&quot;: 281.29833464137135
+    }
+  },
+  &quot;bootstrap_95pct_CI&quot;: {
+    &quot;accuracy&quot;: [
+      0.8421052631578947,
+      1.0
+    ],
+    &quot;macro_f1&quot;: [
+      0.7592592592592592,
+      1.0
+    ],
+    &quot;juvenile_recall&quot;: [
+      1.0,
+      1.0
+    ],
+    &quot;SL_cm_MAE&quot;: [
+      7.4980490850147445,
+      15.25410095917551
+    ],
+    &quot;TL_cm_MAE&quot;: [
+      12.273088009482937,
+      19.2664793305648
+    ],
+    &quot;Weight_g_MAE&quot;: [
+      87.50100285329316,
+      491.17457999982327
+    ]
+  },
+  &quot;test_accuracy_exceeded_90pct&quot;: true,
+  &quot;regression_beat_class_mean_baseline&quot;: false,
+  &quot;limitations&quot;: [
+    &quot;Only 117 independent fish&quot;,
+    &quot;Absolute size may be confounded by camera distance/background/reference objects&quot;,
+    &quot;Grouped test contains only 19 fish; confidence intervals may be wide&quot;
+  ]
+}
+Reminder: 357 images represent only 117 independent fish.
+Output archive: /content/catfish_multitask_outputs.zip
+</pre>
+</div>
+<div class='output'>
+<pre>&lt;IPython.core.display.Javascript object&gt;</pre>
+</div>
+<div class='output'>
+<pre>&lt;IPython.core.display.Javascript object&gt;</pre>
+</div>
+</section>
+<section class='cell'><h2>Cell 37 — markdown</h2>
+<pre>## Optional: upload a new image for inference
+
+Run after training and model reload verification.</pre>
+</section>
+<section class='cell'><h2>Cell 38 — code</h2>
+<details><summary>Code</summary><pre>from google.colab import files
+new_upload=files.upload()
+for name in new_upload:
+    print(predict_catfish(Path(&quot;/content&quot;)/name))
+</pre></details>
+</section>
+</body></html>
