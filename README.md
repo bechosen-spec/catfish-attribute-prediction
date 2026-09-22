@@ -36,6 +36,12 @@ in as `admin`, change the initial password in **My profile**, then use the
 administrator dashboard. Use a strong value: this public prototype must not
 use a weak password such as `123`.
 
+If setup does not complete, Streamlit logs a safe category such as
+`incomplete_configuration`, `invalid_email`, `weak_password`,
+`email_conflict`, `username_conflict`, `administrator_conflict`, or
+`database_error`; it never logs the password or hash. Enter the two keys at the
+root of the Streamlit Secrets editor, not inside a TOML table.
+
 ### Administrator management
 
 Run administrative scripts only from a trusted operator machine or server using the same SQLite data directory as the app. The default local database is `data/catfish.db`. Before running a script, ensure `CATFISH_DATABASE_URL` is unset:
@@ -155,9 +161,11 @@ pip install -r requirements.txt
 ```
 
 The supplied InceptionV3 checkpoint is self-contained and does not require an
-ImageNet download. The independent MobileNetV2 fish validator requires two
-verified local ImageNet assets: the `1.0_224` top-classifier checkpoint and
-the ImageNet class-index JSON. The defaults are the normal Keras cache paths:
+ImageNet download. The independent MobileNetV2 fish validator uses the original
+Keras ImageNet assets: the `1.0_224` top-classifier checkpoint and the ImageNet
+class-index JSON. If they are absent from the normal Keras cache, the app
+downloads them from the official TensorFlow/Keras URLs and verifies fixed
+SHA-256 hashes before loading. The normal cache paths are:
 
 ```text
 ~/.keras/models/mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.h5
@@ -165,10 +173,11 @@ the ImageNet class-index JSON. The defaults are the normal Keras cache paths:
 ```
 
 For an explicit deployment location, set `CATFISH_MOBILENET_WEIGHTS_PATH` and
-`CATFISH_IMAGENET_CLASS_INDEX_PATH`. The app checks SHA-256 integrity before
-loading and fails closed if either asset is absent or invalid; it never falls
-back to randomly initialized weights. No paid API or remote inference service
-is used at runtime.
+`CATFISH_IMAGENET_CLASS_INDEX_PATH`. Explicit paths must already contain the
+verified assets; the app fails closed if either is absent or invalid. No
+randomly initialized validator is ever used. The public sources are
+`https://storage.googleapis.com/tensorflow/keras-applications/mobilenet_v2/`
+and `https://storage.googleapis.com/download.tensorflow.org/data/imagenet_class_index.json`.
 
 The fish validator uses
 [MobileNetV2 from Keras Applications](https://keras.io/api/applications/mobilenet/#mobilenetv2-function),
