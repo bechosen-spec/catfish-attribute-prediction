@@ -8,10 +8,34 @@ Create the initial administrator explicitly (never commit the password):
 
 ```bash
 export CATFISH_ADMIN_INITIAL_PASSWORD='use-a-long-unique-password'
-python scripts/init_admin.py
+python scripts/init_admin.py --email admin@example.com
 ```
 
-This creates only the first `admin` account and marks it to change the initial password after sign-in. It refuses to run if an administrator already exists. Start with `streamlit run app.py`; public users register as ordinary users only. Optional image retention is disclosed at analysis time and stores random-name files in `data/private_images`, not in the database or a public folder.
+This creates only the first `admin` account and marks it to change the initial password after sign-in. It refuses to run if an administrator already exists. The administrator signs in as `admin`, then opens **My profile** to replace the temporary password before accessing the administrator dashboard. `CATFISH_ADMIN_EMAIL` can be used instead of `--email`.
+
+### Administrator management
+
+Run administrative scripts only from a trusted operator machine or server, configured with the same `CATFISH_DATABASE_URL` as the Streamlit app. The default local database is `data/catfish.db`; print the environment variable before acting if you are unsure which database is selected:
+
+```bash
+echo "$CATFISH_DATABASE_URL"
+```
+
+To promote an existing registered account without changing its password, experiments, or profile, first verify its email address and then run:
+
+```bash
+python scripts/promote_admin.py --email user@example.com
+```
+
+Review the displayed account details and type `PROMOTE` at the confirmation prompt. To attribute the change in the administrator audit log, supply an existing active administrator:
+
+```bash
+python scripts/promote_admin.py --email user@example.com --actor-email admin@example.com
+```
+
+Promoted users sign in with their existing username or email and password; their new administrator navigation appears after sign-in. If login fails, confirm that the app and script use the same `CATFISH_DATABASE_URL`, the account is active, and the user is signing in with the registered username/email. The first `admin` account must change its temporary password after the first successful sign-in. Never put database credentials or passwords in Git.
+
+Start with `streamlit run app.py`; public users register as ordinary users only. Optional image retention is disclosed at analysis time and stores random-name files in `data/private_images`, not in the database or a public folder.
 
 See [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for the schema and security/data-flow details. Apply the schema with `alembic upgrade head` where Alembic is used.
 
