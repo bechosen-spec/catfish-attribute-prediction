@@ -36,6 +36,12 @@ in as `admin`, change the initial password in **My profile**, then use the
 administrator dashboard. Use a strong value: this public prototype must not
 use a weak password such as `123`.
 
+If setup does not complete, Streamlit logs a safe category such as
+`incomplete_configuration`, `invalid_email`, `weak_password`,
+`email_conflict`, `username_conflict`, `administrator_conflict`, or
+`database_error`; it never logs the password or hash. Enter the two keys at the
+root of the Streamlit Secrets editor, not inside a TOML table.
+
 ### Administrator management
 
 Run administrative scripts only from a trusted operator machine or server using the same SQLite data directory as the app. The default local database is `data/catfish.db`. Before running a script, ensure `CATFISH_DATABASE_URL` is unset:
