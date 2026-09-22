@@ -5,6 +5,9 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = ROOT_DIR / "assets"
+DATA_DIR = Path(os.getenv("CATFISH_DATA_DIR", ROOT_DIR / "data"))
+SQLITE_DATABASE_PATH = DATA_DIR / "catfish.db"
+PRIVATE_IMAGE_DIR = DATA_DIR / "private_images"
 LOGO_PATH = ASSETS_DIR / "logo.jpeg"
 WEIGHTS_PATH = ROOT_DIR / "InceptionV3_best_model.weights.h5"
 

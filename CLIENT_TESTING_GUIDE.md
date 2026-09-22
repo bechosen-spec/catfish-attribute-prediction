@@ -13,6 +13,22 @@ streamlit run app.py
 Use a fresh local database or a dedicated testing database. Do not test against
 production accounts or records.
 
+### Streamlit Community Cloud prototype
+
+The client-testing deployment uses the default SQLite file at `data/catfish.db`.
+In the Streamlit Cloud app's **Settings → Secrets**, remove
+`CATFISH_DATABASE_URL` completely and reboot the app. Do not add PostgreSQL,
+Neon, Supabase, Railway, or other external database credentials for this
+prototype. Cloud-local SQLite files are disposable: they can disappear after a
+restart, redeploy, or instance move. Use only test accounts and test images.
+
+An operator must create the administrator in the same running SQLite data
+directory using `scripts/init_admin.py` and a strong
+`CATFISH_ADMIN_INITIAL_PASSWORD`. Streamlit Community Cloud does not provide a
+shell for this operation, so an online disposable demo cannot reliably retain a
+CLI-created administrator across instance changes. Local testing is the
+reliable way to create and retain that demo account.
+
 ## Using the application
 
 1. Select **Create account** and enter your name, username, email, and a

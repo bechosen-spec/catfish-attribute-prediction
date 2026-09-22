@@ -2,17 +2,15 @@
 
 ## Accounts and local database
 
-This version adds local account registration, role-protected dashboards, experiment history, administrator analytics, and CSV export. It uses SQLite through SQLAlchemy by default (`data/catfish.db`); set `CATFISH_DATABASE_URL` for another SQLAlchemy-supported database. Account passwords are stored as Argon2 hashes.
+This version adds local account registration, role-protected dashboards, experiment history, administrator analytics, and CSV export. The client-testing prototype uses SQLite through SQLAlchemy at `data/catfish.db` by default. Account passwords are stored as Argon2 hashes.
 
-### Streamlit Cloud database configuration
+### Streamlit Cloud SQLite prototype
 
-For Streamlit Community Cloud, use a managed PostgreSQL instance with a public TLS-enabled connection endpoint. In the app's **Settings → Secrets**, configure only this root-level secret (never commit it):
+This prototype requires no database secret and no external database account. In Streamlit Community Cloud, open **Settings → Secrets** and remove the entire `CATFISH_DATABASE_URL` entry if it is present, then reboot the application. A configured PostgreSQL or other external URL is intentionally treated as a configuration conflict and the app will not start its account features.
 
-```toml
-CATFISH_DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@PUBLIC_HOST:5432/DATABASE?sslmode=require"
-```
+The default file is `data/catfish.db`; retained test images are under `data/private_images`. For a local writable location, set `CATFISH_DATA_DIR` before starting the app. Do not commit either directory.
 
-The app reads `CATFISH_DATABASE_URL` directly from the environment, which Streamlit Secrets supplies at runtime. Use the PostgreSQL provider's externally reachable host—not `localhost`, a private network hostname, or a pooler/endpoint unavailable from Streamlit Cloud. If startup shows the database-unavailable page, inspect Streamlit logs for a redacted diagnostic category (`invalid_url`, `dns_error`, `ssl_error`, `authentication_error`, `database_not_found`, or `server_unavailable`), then correct the secret/provider configuration and restart. The app never falls back to SQLite when this secret is set.
+Streamlit Community Cloud does not provide durable SQLite persistence: its local files may be lost after a restart, redeploy, or instance move. Use only disposable test accounts and test images. Do not use this SQLite prototype for production data.
 
 Create the initial administrator explicitly (never commit the password):
 
@@ -25,10 +23,10 @@ This creates only the first `admin` account and marks it to change the initial p
 
 ### Administrator management
 
-Run administrative scripts only from a trusted operator machine or server, configured with the same `CATFISH_DATABASE_URL` as the Streamlit app. The default local database is `data/catfish.db`; print the environment variable before acting if you are unsure which database is selected:
+Run administrative scripts only from a trusted operator machine or server using the same SQLite data directory as the app. The default local database is `data/catfish.db`. Before running a script, ensure `CATFISH_DATABASE_URL` is unset:
 
 ```bash
-echo "$CATFISH_DATABASE_URL"
+unset CATFISH_DATABASE_URL
 ```
 
 To promote an existing registered account without changing its password, experiments, or profile, first verify its email address and then run:
