@@ -1,17 +1,49 @@
 """Credential validation and trusted server-side authentication operations."""
 from __future__ import annotations
 import re
-from datetime import timedelta
+from dataclasses import dataclass
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
 from src.database import AdminAuditLog, User, utcnow
 
 PASSWORD_HASHER = PasswordHasher()
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 class AuthError(ValueError): pass
+
+
+@dataclass(frozen=True)
+class AdminBootstrapResult:
+    status: str
+
+
+def initialize_configured_admin(session, email: str | None, password: str | None) -> AdminBootstrapResult:
+    """Create the configured first administrator once, without changing any account.
+
+    This is intended for a disposable Streamlit SQLite deployment where the
+    operator supplies both values through server-side secrets. It deliberately
+    does not promote an existing user or reset an existing administrator.
+    """
+    if not email and not password:
+        return AdminBootstrapResult("not_configured")
+    if not email or not password:
+        return AdminBootstrapResult("incomplete_configuration")
+    normalized_email = email.strip().lower()
+    if not EMAIL_RE.fullmatch(normalized_email) or len(password) < 8:
+        return AdminBootstrapResult("invalid_configuration")
+
+    email_account = session.scalar(select(User).where(User.email == normalized_email))
+    username_account = session.scalar(select(User).where(User.username == "admin"))
+    if email_account is not None:
+        if email_account.username == "admin" and email_account.role == "ADMIN":
+            return AdminBootstrapResult("already_initialized")
+        return AdminBootstrapResult("account_conflict")
+    if username_account is not None or session.scalar(select(User).where(User.role == "ADMIN")):
+        return AdminBootstrapResult("account_conflict")
+
+    create_initial_admin(session, password, normalized_email)
+    return AdminBootstrapResult("created")
 
 def register(session, full_name: str, username: str, email: str, password: str, confirmation: str) -> User:
     full_name, username, email = full_name.strip(), username.strip(), email.strip().lower()

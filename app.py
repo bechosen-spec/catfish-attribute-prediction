@@ -1,12 +1,13 @@
 """Database-backed Streamlit entry point; inference modules remain unchanged."""
 from __future__ import annotations
 import json
+import os
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select
-from src.auth import AuthError, authenticate, change_password, register
+from src.auth import AuthError, authenticate, change_password, initialize_configured_admin, register
 from src.config import APP_TITLE, CLASS_CONFIDENCE_WARNING, LOGO_PATH
-from src.database import AdminAuditLog, DatabaseUnavailableError, Experiment, User, init_database, session_scope
+from src.database import AdminAuditLog, DatabaseUnavailableError, Experiment, User, database_diagnostic, init_database, session_scope
 from src.image_validator import ValidationModelLoadError, load_validation_model
 from src.model import load_prediction_model
 from src.prediction import predict_attributes
@@ -19,10 +20,34 @@ try:
 except DatabaseUnavailableError:
     # The detailed diagnostic is deliberately kept in server logs. Do not show
     # provider URLs, credentials, hostnames, or driver messages to visitors.
-    st.error("The application database is temporarily unavailable. Registration, sign-in, and predictions are unavailable until the connection is restored.")
-    st.info("An operator should verify the CATFISH_DATABASE_URL Streamlit secret, the public PostgreSQL endpoint, and the provider's SSL requirements.")
+    diagnostic = database_diagnostic()
+    if diagnostic.status == "external_database_configured":
+        st.error("This client-testing prototype is configured for SQLite, but an external database URL is still set.")
+        st.info("An operator must remove CATFISH_DATABASE_URL from Streamlit Cloud Secrets, then reboot the app.")
+    else:
+        st.error("The application SQLite database is temporarily unavailable. Registration, sign-in, and predictions are unavailable until it is restored.")
     st.stop()
 apply_styles()
+
+
+def bootstrap_configured_admin() -> None:
+    """Run an idempotent, server-secret-based first-admin setup for this SQLite DB."""
+    try:
+        with session_scope() as session:
+            result = initialize_configured_admin(
+                session,
+                os.getenv("CATFISH_ADMIN_EMAIL"),
+                os.getenv("CATFISH_ADMIN_INITIAL_PASSWORD"),
+            )
+    except Exception:
+        # Never display or log secret values. Normal sign-up/sign-in still work.
+        st.warning("The configured administrator could not be initialized. Existing accounts were left unchanged.")
+        return
+    if result.status in {"incomplete_configuration", "invalid_configuration", "account_conflict"}:
+        st.warning("The configured administrator could not be initialized. Existing accounts were left unchanged.")
+
+
+bootstrap_configured_admin()
 for k,v in {"auth_user_id":None,"attempts":0}.items(): st.session_state.setdefault(k,v)
 
 def me():

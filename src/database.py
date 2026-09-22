@@ -3,21 +3,20 @@ from __future__ import annotations
 
 import os
 import logging
-import socket
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event, text
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
 
-from src.config import ROOT_DIR
+from src.config import SQLITE_DATABASE_PATH
 
-DATABASE_URL = os.getenv("CATFISH_DATABASE_URL", f"sqlite:///{ROOT_DIR / 'data' / 'catfish.db'}")
+DATABASE_URL = os.getenv("CATFISH_DATABASE_URL", f"sqlite:///{SQLITE_DATABASE_PATH}")
 DATABASE_URL_CONFIGURED = bool(os.getenv("CATFISH_DATABASE_URL"))
 logger = logging.getLogger(__name__)
 
@@ -122,14 +121,19 @@ def _sqlite_args() -> dict:
     return {"connect_args": {"check_same_thread": False}} if DATABASE_URL.startswith("sqlite") else {}
 
 
-try:
-    engine: Optional[Engine] = create_engine(DATABASE_URL, future=True, pool_pre_ping=True, **_sqlite_args())
-    _engine_configuration_error: Optional[Exception] = None
-except (SQLAlchemyError, ValueError, ImportError) as exc:
+if DATABASE_URL.startswith("sqlite"):
+    try:
+        engine: Optional[Engine] = create_engine(DATABASE_URL, future=True, pool_pre_ping=True, **_sqlite_args())
+        _engine_configuration_error: Optional[Exception] = None
+    except (SQLAlchemyError, ValueError, ImportError) as exc:
+        engine = None
+        _engine_configuration_error = exc
+else:
     # Do not raise during Streamlit module import: app.py renders a controlled
-    # unavailable-database page below. Never log the URL or exception text.
+    # configuration-conflict page below. The SQLite prototype never connects
+    # to external databases or silently substitutes a different store.
     engine = None
-    _engine_configuration_error = exc
+    _engine_configuration_error = None
 
 # SQLite does not enforce declared foreign keys unless each connection enables it.
 # This listener is intentionally registered before any session is created.
@@ -143,68 +147,37 @@ if engine is not None and DATABASE_URL.startswith("sqlite"):
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
-def _failure_status(exc: BaseException) -> tuple[str, str]:
-    """Map provider/driver failures to display-safe, credential-free messages."""
-    value = str(exc).lower()
-    if "ssl" in value or "certificate" in value or "tls" in value:
-        return "ssl_error", "The database SSL configuration was rejected."
-    if any(item in value for item in ("password authentication", "authentication failed", "invalid password")):
-        return "authentication_error", "The database rejected the configured credentials."
-    if any(item in value for item in ("does not exist", "unknown database", "invalid catalog")):
-        return "database_not_found", "The configured database does not exist or is not available to this user."
-    if any(item in value for item in ("timeout", "timed out", "connection refused", "server closed", "network is unreachable", "connection failed", "failed to connect", "could not connect", "connection is bad", "connection is closed")):
-        return "server_unavailable", "The database server is unavailable or not reachable from Streamlit Cloud."
-    return "connection_error", "The database connection could not be established."
-
-
-def database_diagnostic(check_connection: bool = False) -> DatabaseDiagnostic:
-    """Return a safe health summary without exposing URLs, usernames, or passwords."""
+def database_diagnostic() -> DatabaseDiagnostic:
+    """Return a safe SQLite-prototype health summary without sensitive details."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return DatabaseDiagnostic(
+            True,
+            None,
+            None,
+            "external_database_configured",
+            "This SQLite prototype cannot start while CATFISH_DATABASE_URL selects an external database. Remove that secret and restart the app.",
+        )
     if _engine_configuration_error is not None:
-        return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, None, None, "invalid_url", "The database connection URL is invalid or its driver is unavailable.")
-    try:
-        url = make_url(DATABASE_URL)
-    except Exception:
-        return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, None, None, "invalid_url", "The database connection URL is invalid.")
-    dialect = url.get_dialect().name
-    if dialect == "sqlite":
-        return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, dialect, None, "ready", "SQLite database configuration is available.")
-    hostname_resolves: Optional[bool] = None
-    if url.host:
-        try:
-            socket.getaddrinfo(url.host, url.port or 5432, type=socket.SOCK_STREAM)
-            hostname_resolves = True
-        except socket.gaierror:
-            return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, dialect, False, "dns_error", "The configured database hostname does not resolve.")
-        except OSError:
-            hostname_resolves = False
-            return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, dialect, False, "dns_error", "The configured database hostname cannot be resolved.")
-    if check_connection:
-        try:
-            if engine is None:
-                raise DatabaseUnavailableError
-            with engine.connect() as connection:
-                connection.execute(text("SELECT 1"))
-        except Exception as exc:
-            status, message = _failure_status(exc)
-            return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, dialect, hostname_resolves, status, message)
-    return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, dialect, hostname_resolves, "ready", "Database configuration is available.")
+        return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, "sqlite", None, "invalid_sqlite_url", "The SQLite database URL is invalid.")
+    return DatabaseDiagnostic(DATABASE_URL_CONFIGURED, "sqlite", None, "ready", "SQLite database configuration is available.")
 
 
 def init_database() -> None:
-    diagnostic = database_diagnostic(check_connection=True)
+    diagnostic = database_diagnostic()
     if diagnostic.status != "ready":
         logger.warning("Database startup unavailable: status=%s dialect=%s dns=%s", diagnostic.status, diagnostic.dialect, diagnostic.hostname_resolves)
         raise DatabaseUnavailableError(diagnostic.message)
-    if DATABASE_URL.startswith("sqlite"):
-        Path(DATABASE_URL.removeprefix("sqlite:///" )).parent.mkdir(parents=True, exist_ok=True)
+    if DATABASE_URL.startswith("sqlite:///"):
+        database_path = DATABASE_URL.removeprefix("sqlite:///")
+        if database_path != ":memory:":
+            Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     try:
         if engine is None:
             raise DatabaseUnavailableError("The database engine is unavailable.")
         Base.metadata.create_all(engine)
     except SQLAlchemyError as exc:
-        status, message = _failure_status(exc)
-        logger.warning("Database schema startup unavailable: status=%s", status)
-        raise DatabaseUnavailableError(message) from exc
+        logger.warning("SQLite schema startup unavailable")
+        raise DatabaseUnavailableError("The SQLite database could not be initialized.") from exc
 
 
 @contextmanager

@@ -1,9 +1,10 @@
 """Experiment persistence; this layer preserves the validation-before-inference boundary."""
 from __future__ import annotations
-import json, os, time, uuid
+import json, time, uuid
 from pathlib import Path
 from sqlalchemy import func, select
 from src.database import Experiment, ImageValidationResult, ModelVersion, PredictionResultRecord, User, utcnow
+from src.config import PRIVATE_IMAGE_DIR
 from src.image_validator import validate_image
 from src.analysis import predict_if_valid
 
@@ -27,7 +28,7 @@ def run_experiment(session, user_id, data, *, validator, load_model_fn, predict_
         exp.prediction = PredictionResultRecord(experiment_id=exp.id, model_version_id=_model_version(session).id, growth_stage=prediction.growth_stage, confidence=prediction.confidence, probabilities_json=json.dumps(prediction.probabilities), standard_length_cm=prediction.standard_length_cm, total_length_cm=prediction.total_length_cm, weight_g=prediction.weight_g)
         exp.status = "SUCCESS"
         if retain_image:
-            store = Path(os.getenv("CATFISH_IMAGE_STORAGE", "data/private_images")); store.mkdir(parents=True, exist_ok=True)
+            store = PRIVATE_IMAGE_DIR; store.mkdir(parents=True, exist_ok=True)
             target = store / f"{uuid.uuid4().hex}.bin"; target.write_bytes(data); exp.image_path = str(target)
         exp.processing_ms = round((time.perf_counter()-started)*1000); session.flush(); return exp, validation, prediction
     except Exception as exc:
