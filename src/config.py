@@ -1,5 +1,6 @@
 """Central application configuration."""
 
+import os
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -22,6 +23,23 @@ MIN_EDGE_SCORE = 18.0
 
 VALIDATOR_INPUT_SIZE = (224, 224)
 VALIDATOR_TOP_K = 10
+MOBILENET_V2_WEIGHTS_FILENAME = "mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.h5"
+# Official Keras MobileNetV2 ImageNet top-classifier checkpoint used by TF 2.16.
+MOBILENET_V2_WEIGHTS_SHA256 = "3e195a2857356cfc092cbbb460beb2a5bce279015d7792598b8d3d9e451902e3"
+MOBILENET_V2_WEIGHTS_PATH = Path(
+    os.getenv(
+        "CATFISH_MOBILENET_WEIGHTS_PATH",
+        Path.home() / ".keras" / "models" / MOBILENET_V2_WEIGHTS_FILENAME,
+    )
+)
+IMAGENET_CLASS_INDEX_FILENAME = "imagenet_class_index.json"
+IMAGENET_CLASS_INDEX_SHA256 = "a1e7a966a1f601d39e4b43e119b3e7dd4a2ad3ea08cf69847cbaf021013767bc"
+IMAGENET_CLASS_INDEX_PATH = Path(
+    os.getenv(
+        "CATFISH_IMAGENET_CLASS_INDEX_PATH",
+        Path.home() / ".keras" / "models" / IMAGENET_CLASS_INDEX_FILENAME,
+    )
+)
 MIN_FISH_TOP_CONFIDENCE = 0.08
 MIN_FISH_TOTAL_CONFIDENCE = 0.12
 CONFIDENT_NON_FISH_THRESHOLD = 0.30

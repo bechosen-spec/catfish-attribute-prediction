@@ -1,5 +1,20 @@
 # Catfish Attribute Estimator
 
+## Accounts and local database
+
+This version adds local account registration, role-protected dashboards, experiment history, administrator analytics, and CSV export. It uses SQLite through SQLAlchemy by default (`data/catfish.db`); set `CATFISH_DATABASE_URL` for another SQLAlchemy-supported database. Account passwords are stored as Argon2 hashes.
+
+Create the initial administrator explicitly (never commit the password):
+
+```bash
+export CATFISH_ADMIN_INITIAL_PASSWORD='use-a-long-unique-password'
+python scripts/init_admin.py
+```
+
+This creates only the first `admin` account and marks it to change the initial password after sign-in. It refuses to run if an administrator already exists. Start with `streamlit run app.py`; public users register as ordinary users only. Optional image retention is disclosed at analysis time and stores random-name files in `data/private_images`, not in the database or a public folder.
+
+See [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for the schema and security/data-flow details. Apply the schema with `alembic upgrade head` where Alembic is used.
+
 A local Streamlit application that accepts an uploaded image or webcam capture,
 checks that it is a usable image containing a likely fish, and then estimates:
 
@@ -92,9 +107,21 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The first run may download public ImageNet weights for InceptionV3 and
-MobileNetV2 into the Keras cache. Later runs use that local cache. No paid API or
-remote inference service is used.
+The supplied InceptionV3 checkpoint is self-contained and does not require an
+ImageNet download. The independent MobileNetV2 fish validator requires two
+verified local ImageNet assets: the `1.0_224` top-classifier checkpoint and
+the ImageNet class-index JSON. The defaults are the normal Keras cache paths:
+
+```text
+~/.keras/models/mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.h5
+~/.keras/models/imagenet_class_index.json
+```
+
+For an explicit deployment location, set `CATFISH_MOBILENET_WEIGHTS_PATH` and
+`CATFISH_IMAGENET_CLASS_INDEX_PATH`. The app checks SHA-256 integrity before
+loading and fails closed if either asset is absent or invalid; it never falls
+back to randomly initialized weights. No paid API or remote inference service
+is used at runtime.
 
 The fish validator uses
 [MobileNetV2 from Keras Applications](https://keras.io/api/applications/mobilenet/#mobilenetv2-function),

@@ -1,0 +1,108 @@
+{
+  "images": 357,
+  "independent_fish": 117,
+  "class_images": {
+    "juvenile": 147,
+    "fingerling": 106,
+    "adult": 104
+  },
+  "class_fish": {
+    "adult": 33,
+    "fingerling": 35,
+    "juvenile": 49
+  },
+  "splits": {
+    "train": {
+      "images": 249,
+      "fish": 81
+    },
+    "validation": {
+      "images": 51,
+      "fish": 17
+    },
+    "test": {
+      "images": 57,
+      "fish": 19
+    }
+  },
+  "fish_leakage": "PASS: zero overlap",
+  "best_classification_backbone": "EfficientNetB0",
+  "best_preprocessing": "image_path",
+  "best_imbalance_strategy": "class_weights",
+  "best_validation_accuracy": 0.9215686274509803,
+  "best_validation_macro_f1": 0.9238095238095237,
+  "validation_juvenile_recall": 0.9047619047619048,
+  "image_test_metrics": {
+    "accuracy": 0.8245614035087719,
+    "balanced_accuracy": 0.8018518518518518,
+    "macro_precision": 0.839326326141742,
+    "macro_recall": 0.8018518518518518,
+    "macro_f1": 0.8122606952795633,
+    "weighted_f1": 0.8204611674323691,
+    "juvenile_recall": 0.9166666666666666
+  },
+  "fish_test_metrics": {
+    "accuracy": 0.9473684210526315,
+    "balanced_accuracy": 0.9333333333333332,
+    "macro_precision": 0.9629629629629629,
+    "macro_recall": 0.9333333333333332,
+    "macro_f1": 0.943355119825708,
+    "weighted_f1": 0.9459924320605435,
+    "juvenile_recall": 1.0
+  },
+  "fish_regression_metrics": {
+    "SL_cm": {
+      "MAE": 11.235527921977797,
+      "RMSE": 14.104121878954505,
+      "R2": 0.285676424566491,
+      "MAPE": 64.49271848143754
+    },
+    "TL_cm": {
+      "MAE": 15.636325936568408,
+      "RMSE": 17.45385930896405,
+      "R2": 0.16260601494006977,
+      "MAPE": 94.39642479811798
+    },
+    "Weight_g": {
+      "MAE": 285.03227649487945,
+      "RMSE": 519.3291374321101,
+      "R2": -0.15550503785140068,
+      "MAPE": 281.29833464137135
+    }
+  },
+  "bootstrap_95pct_CI": {
+    "accuracy": [
+      0.8421052631578947,
+      1.0
+    ],
+    "macro_f1": [
+      0.7592592592592592,
+      1.0
+    ],
+    "juvenile_recall": [
+      1.0,
+      1.0
+    ],
+    "SL_cm_MAE": [
+      7.4980490850147445,
+      15.25410095917551
+    ],
+    "TL_cm_MAE": [
+      12.273088009482937,
+      19.2664793305648
+    ],
+    "Weight_g_MAE": [
+      87.50100285329316,
+      491.17457999982327
+    ]
+  },
+  "test_accuracy_exceeded_90pct": true,
+  "regression_beat_class_mean_baseline": false,
+  "limitations": [
+    "Only 117 independent fish",
+    "Absolute size may be confounded by camera distance/background/reference objects",
+    "Grouped test contains only 19 fish; confidence intervals may be wide"
+  ]
+}
+Reminder: 357 images represent only 117 independent fish.
+Output archive: /content/catfish_multitask_outputs.zip

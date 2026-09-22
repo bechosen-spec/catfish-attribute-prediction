@@ -14,8 +14,13 @@ class ModelLoadError(RuntimeError):
     """Raised when the trained catfish model cannot be constructed."""
 
 
-def build_prediction_model(base_weights: str | None = "imagenet") -> Model:
-    """Recreate the exact architecture expected by the existing weight file."""
+def build_prediction_model(base_weights: str | None = None) -> Model:
+    """Recreate the architecture expected by the supplied complete checkpoint.
+
+    The checkpoint contains the base-model weights, so constructing with
+    ``None`` avoids an unnecessary ImageNet download during application start.
+    ``base_weights`` remains injectable for controlled training/diagnostic use.
+    """
     base = InceptionV3(weights=base_weights, include_top=False, input_shape=(224, 224, 3))
     for layer in base.layers:
         layer.trainable = False

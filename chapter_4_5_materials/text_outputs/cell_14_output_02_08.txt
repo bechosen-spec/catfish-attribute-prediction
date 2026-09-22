@@ -1,0 +1,4 @@
+
+ validation images 51 fish 17
+images/class {'juvenile': 21, 'adult': 15, 'fingerling': 15}
+fish/class {'adult': 5, 'fingerling': 5, 'juvenile': 7}

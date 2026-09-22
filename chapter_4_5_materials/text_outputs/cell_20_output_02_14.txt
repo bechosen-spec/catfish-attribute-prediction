@@ -1,0 +1,48 @@
+ — full validation: {'epoch': 1, 'val_accuracy': 0.8431372549019608, 'val_balanced_accuracy': 0.834920634920635, 'val_macro_f1': 0.83794296400187, 'fingerling_recall': 1.0, 'juvenile_recall': 0.9047619047619048, 'adult_recall': 0.6}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_weights_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m22s[0m 673ms/step - accuracy: 0.6827 - loss: 0.0285 - val_accuracy: 0.8431 - val_loss: 0.6195 - val_balanced_accuracy: 0.8349 - val_macro_f1: 0.8379 - fingerling_recall: 1.0000 - juvenile_recall: 0.9048 - adult_recall: 0.6000 - learning_rate: 3.0000e-04
+Epoch 2/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 49ms/step - accuracy: 0.8303 - loss: 0.0122 — full validation: {'epoch': 2, 'val_accuracy': 0.9019607843137255, 'val_balanced_accuracy': 0.8952380952380953, 'val_macro_f1': 0.9038496624703521, 'fingerling_recall': 0.9333333333333333, 'juvenile_recall': 0.9523809523809523, 'adult_recall': 0.8}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_weights_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m3s[0m 137ms/step - accuracy: 0.8233 - loss: 0.0140 - val_accuracy: 0.9020 - val_loss: 0.4755 - val_balanced_accuracy: 0.8952 - val_macro_f1: 0.9038 - fingerling_recall: 0.9333 - juvenile_recall: 0.9524 - adult_recall: 0.8000 - learning_rate: 3.0000e-04
+Fine-tuning diagnostic: {
+  "backbone": "EfficientNetB0",
+  "representation": "nested",
+  "detected_backbone_layers": 238,
+  "frozen_backbone_layers": 191,
+  "unfrozen_backbone_layers": 47,
+  "first_unfrozen_layer": "block6b_expand_activation",
+  "last_unfrozen_layer": "top_activation",
+  "batchnorm_layers_frozen": 49,
+  "trainable_parameters": 2977987,
+  "non_trainable_parameters": 1405411
+}
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 62ms/step - accuracy: 0.8924 - loss: 0.0176 — full validation: {'epoch': 1, 'val_accuracy': 0.9215686274509803, 'val_balanced_accuracy': 0.9238095238095237, 'val_macro_f1': 0.9238095238095237, 'fingerling_recall': 0.9333333333333333, 'juvenile_recall': 0.9047619047619048, 'adult_recall': 0.9333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_weights.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m26s[0m 700ms/step - accuracy: 0.8755 - loss: 0.0182 - val_accuracy: 0.9216 - val_loss: 0.4355 - val_balanced_accuracy: 0.9238 - val_macro_f1: 0.9238 - fingerling_recall: 0.9333 - juvenile_recall: 0.9048 - adult_recall: 0.9333 - learning_rate: 1.0000e-05
+
+===== effb0_focal =====
+Preprocessing: {'strategy': 'Keras EfficientNet internal Rescaling/Normalization', 'internal': True, 'input_range': '0..255'}
+Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 51ms/step - accuracy: 0.5069 - loss: 0.0304 — full validation: {'epoch': 1, 'val_accuracy': 0.7843137254901961, 'val_balanced_accuracy': 0.7873015873015873, 'val_macro_f1': 0.7818615493034097, 'fingerling_recall': 1.0, 'juvenile_recall': 0.7619047619047619, 'adult_recall': 0.6}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_focal_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m23s[0m 624ms/step - accuracy: 0.6024 - loss: 0.0242 - val_accuracy: 0.7843 - val_loss: 0.0092 - val_balanced_accuracy: 0.7873 - val_macro_f1: 0.7819 - fingerling_recall: 1.0000 - juvenile_recall: 0.7619 - adult_recall: 0.6000 - learning_rate: 3.0000e-04
+Epoch 2/2
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 64ms/step - accuracy: 0.8325 - loss: 0.0082 — full validation: {'epoch': 2, 'val_accuracy': 0.8235294117647058, 'val_balanced_accuracy': 0.8126984126984126, 'val_macro_f1': 0.8143064134828033, 'fingerling_recall': 1.0, 'juvenile_recall': 0.9047619047619048, 'adult_recall': 0.5333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_focal_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m4s[0m 157ms/step - accuracy: 0.8474 - loss: 0.0074 - val_accuracy: 0.8235 - val_loss: 0.0077 - val_balanced_accuracy: 0.8127 - val_macro_f1: 0.8143 - fingerling_recall: 1.0000 - juvenile_recall: 0.9048 - adult_recall: 0.5333 - learning_rate: 3.0000e-04
+Fine-tuning diagnostic: {
+  "backbone": "EfficientNetB0",
+  "representation": "nested",
+  "detected_backbone_layers": 238,
+  "frozen_backbone_layers": 191,
+  "unfrozen_backbone_layers": 47,
+  "first_unfrozen_layer": "block6b_expand_activation",
+  "last_unfrozen_layer": "top_activation",
+  "batchnorm_layers_frozen": 49,
+  "trainable_parameters": 2977987,
+  "non_trainable_parameters": 1405411
+}
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 64ms/step - accuracy: 0.8798 - loss: 0.0059 — full validation: {'epoch': 1, 'val_accuracy': 0.8431372549019608, 'val_balanced_accuracy': 0.8476190476190476, 'val_macro_f1': 0.845295478220951, 'fingerling_recall': 1.0, 'juvenile_recall': 0.8095238095238095, 'adult_recall': 0.7333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_focal.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m28s[0m 715ms/step - accuracy: 0.8514 - loss: 0.0063 - val_accuracy: 0.8431 - val_loss: 0.0057 - val_balanced_accuracy: 0.8476 - val_macro_f1: 0.8453 - fingerling_recall: 1.0000 - juvenile_recall: 0.8095 - adult_recall: 0.7333 - learning_rate: 1.0000e-05

@@ -1,0 +1,8 @@
+{
+  "mime_type": "application/vnd.google.colaboratory.intrinsic+json",
+  "value": {
+    "type": "dataframe",
+    "variable_name": "audit_table",
+    "summary": "{\n  \"name\": \"audit_table\",\n  \"rows\": 9,\n  \"fields\": [\n    {\n      \"column\": \"metric\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 9,\n        \"samples\": [\n          \"duplicates_across_fish\",\n          \"valid_images\",\n          \"unsupported_files\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"value\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 154,\n        \"min\": 0,\n        \"max\": 357,\n        \"num_unique_values\": 6,\n        \"samples\": [\n          357,\n          0,\n          2\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
+  }
+}
