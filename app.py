@@ -6,7 +6,7 @@ import streamlit as st
 from sqlalchemy import select
 from src.auth import AuthError, authenticate, change_password, register
 from src.config import APP_TITLE, CLASS_CONFIDENCE_WARNING, LOGO_PATH
-from src.database import AdminAuditLog, Experiment, User, init_database, session_scope
+from src.database import AdminAuditLog, DatabaseUnavailableError, Experiment, User, init_database, session_scope
 from src.image_validator import ValidationModelLoadError, load_validation_model
 from src.model import load_prediction_model
 from src.prediction import predict_attributes
@@ -14,7 +14,15 @@ from src.services import admin_stats, run_experiment, user_experiments
 from src.ui import apply_styles, render_disclaimer, render_footer, render_hero, render_preview, render_results, render_validation_details
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🐟", layout="wide", initial_sidebar_state="collapsed")
-init_database(); apply_styles()
+try:
+    init_database()
+except DatabaseUnavailableError:
+    # The detailed diagnostic is deliberately kept in server logs. Do not show
+    # provider URLs, credentials, hostnames, or driver messages to visitors.
+    st.error("The application database is temporarily unavailable. Registration, sign-in, and predictions are unavailable until the connection is restored.")
+    st.info("An operator should verify the CATFISH_DATABASE_URL Streamlit secret, the public PostgreSQL endpoint, and the provider's SSL requirements.")
+    st.stop()
+apply_styles()
 for k,v in {"auth_user_id":None,"attempts":0}.items(): st.session_state.setdefault(k,v)
 
 def me():

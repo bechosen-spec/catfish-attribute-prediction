@@ -4,6 +4,16 @@
 
 This version adds local account registration, role-protected dashboards, experiment history, administrator analytics, and CSV export. It uses SQLite through SQLAlchemy by default (`data/catfish.db`); set `CATFISH_DATABASE_URL` for another SQLAlchemy-supported database. Account passwords are stored as Argon2 hashes.
 
+### Streamlit Cloud database configuration
+
+For Streamlit Community Cloud, use a managed PostgreSQL instance with a public TLS-enabled connection endpoint. In the app's **Settings → Secrets**, configure only this root-level secret (never commit it):
+
+```toml
+CATFISH_DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@PUBLIC_HOST:5432/DATABASE?sslmode=require"
+```
+
+The app reads `CATFISH_DATABASE_URL` directly from the environment, which Streamlit Secrets supplies at runtime. Use the PostgreSQL provider's externally reachable host—not `localhost`, a private network hostname, or a pooler/endpoint unavailable from Streamlit Cloud. If startup shows the database-unavailable page, inspect Streamlit logs for a redacted diagnostic category (`invalid_url`, `dns_error`, `ssl_error`, `authentication_error`, `database_not_found`, or `server_unavailable`), then correct the secret/provider configuration and restart. The app never falls back to SQLite when this secret is set.
+
 Create the initial administrator explicitly (never commit the password):
 
 ```bash
