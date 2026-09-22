@@ -23,11 +23,19 @@ prototype. Cloud-local SQLite files are disposable: they can disappear after a
 restart, redeploy, or instance move. Use only test accounts and test images.
 
 An operator must create the administrator in the same running SQLite data
-directory using `scripts/init_admin.py` and a strong
-`CATFISH_ADMIN_INITIAL_PASSWORD`. Streamlit Community Cloud does not provide a
-shell for this operation, so an online disposable demo cannot reliably retain a
-CLI-created administrator across instance changes. Local testing is the
-reliable way to create and retain that demo account.
+directory. For the deployed disposable demo, set both Streamlit Secrets below;
+the app creates `admin` once when its SQLite file is empty:
+
+```toml
+CATFISH_ADMIN_EMAIL = "admin@example.com"
+CATFISH_ADMIN_INITIAL_PASSWORD = "a-strong-unique-initial-password"
+```
+
+The account is not recreated, promoted, or password-reset after subsequent
+restarts. The first successful sign-in requires a password change before the
+administrator dashboard is available. For local use, `scripts/init_admin.py`
+remains available. Cloud-local SQLite can still be lost after an instance move,
+so retain only disposable test data.
 
 ## Using the application
 

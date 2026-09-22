@@ -21,6 +21,21 @@ python scripts/init_admin.py --email admin@example.com
 
 This creates only the first `admin` account and marks it to change the initial password after sign-in. It refuses to run if an administrator already exists. The administrator signs in as `admin`, then opens **My profile** to replace the temporary password before accessing the administrator dashboard. `CATFISH_ADMIN_EMAIL` can be used instead of `--email`.
 
+For the disposable Streamlit Cloud SQLite prototype, set both of these in
+**Settings → Secrets** before the first app start:
+
+```toml
+CATFISH_ADMIN_EMAIL = "admin@example.com"
+CATFISH_ADMIN_INITIAL_PASSWORD = "a-strong-unique-initial-password"
+```
+
+The app creates the `admin` account only when no conflicting user or
+administrator exists. On later starts it leaves the existing account, password
+hash, role, and history unchanged. The password is never shown or logged. Sign
+in as `admin`, change the initial password in **My profile**, then use the
+administrator dashboard. Use a strong value: this public prototype must not
+use a weak password such as `123`.
+
 ### Administrator management
 
 Run administrative scripts only from a trusted operator machine or server using the same SQLite data directory as the app. The default local database is `data/catfish.db`. Before running a script, ensure `CATFISH_DATABASE_URL` is unset:
