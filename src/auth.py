@@ -6,7 +6,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
-from src.database import User, utcnow
+from src.database import AdminAuditLog, User, utcnow
 
 PASSWORD_HASHER = PasswordHasher()
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -38,8 +38,38 @@ def change_password(user: User, current: str, new: str, confirmation: str) -> No
     if new != confirmation: raise AuthError("Passwords do not match.")
     user.password_hash = PASSWORD_HASHER.hash(new); user.must_change_password = False
 
-def create_initial_admin(session, password: str) -> User:
+def create_initial_admin(session, password: str, email: str) -> User:
     if session.scalar(select(User).where(User.role == "ADMIN")): raise AuthError("An administrator account already exists.")
     if len(password) < 8: raise AuthError("CATFISH_ADMIN_INITIAL_PASSWORD must be at least 8 characters.")
-    admin = User(full_name="System Administrator", username="admin", email="admin@local.invalid", password_hash=PASSWORD_HASHER.hash(password), role="ADMIN", must_change_password=True)
+    email = email.strip().lower()
+    if not EMAIL_RE.fullmatch(email): raise AuthError("Enter a valid administrator email address.")
+    admin = User(full_name="System Administrator", username="admin", email=email, password_hash=PASSWORD_HASHER.hash(password), role="ADMIN", must_change_password=True)
     session.add(admin); session.flush(); return admin
+
+
+def promote_user_to_admin(session, email: str, actor: User | None = None) -> User:
+    """Promote one existing account without changing its credentials or records."""
+    email = email.strip().lower()
+    if not EMAIL_RE.fullmatch(email):
+        raise AuthError("Enter a valid email address.")
+    matches = list(session.scalars(select(User).where(User.email == email)))
+    if not matches:
+        raise AuthError("No account exists for that email address.")
+    if len(matches) != 1:
+        raise AuthError("More than one account matched that email address; promotion stopped.")
+    user = matches[0]
+    if user.role == "ADMIN":
+        return user
+    user.role = "ADMIN"
+    if actor is not None:
+        if actor.role != "ADMIN" or not actor.is_active:
+            raise AuthError("Audit actor must be an active administrator.")
+        session.add(AdminAuditLog(
+            admin_user_id=actor.id,
+            action="user_promoted_to_admin",
+            target_type="user",
+            target_id=str(user.id),
+            details=f"Promoted {user.email} using the trusted operator script.",
+        ))
+    session.flush()
+    return user
