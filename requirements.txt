@@ -3,6 +3,10 @@ streamlit>=1.48,<2.0
 tensorflow>=2.16,<2.17
 numpy>=1.26,<2.0
 Pillow>=10.3,<12.0
+SQLAlchemy>=2.0,<3.0
+alembic>=1.13,<2.0
+argon2-cffi>=23.1,<24.0
+pandas>=2.2,<3.0
 
 # Development and testing
 pytest>=8.2,<9.0

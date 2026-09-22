@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path
 
 import numpy as np
 import streamlit as st
 from PIL import Image
 from tensorflow.keras.applications.mobilenet_v2 import (
     MobileNetV2,
-    decode_predictions,
     preprocess_input,
 )
 
@@ -17,6 +19,10 @@ from src.config import (
     CONFIDENT_NON_FISH_THRESHOLD,
     MIN_FISH_TOP_CONFIDENCE,
     MIN_FISH_TOTAL_CONFIDENCE,
+    MOBILENET_V2_WEIGHTS_PATH,
+    MOBILENET_V2_WEIGHTS_SHA256,
+    IMAGENET_CLASS_INDEX_PATH,
+    IMAGENET_CLASS_INDEX_SHA256,
     VALIDATOR_INPUT_SIZE,
     VALIDATOR_TOP_K,
 )
@@ -34,6 +40,54 @@ FISH_LABELS = {
 }
 
 
+class ValidationModelLoadError(RuntimeError):
+    """Raised when the required, trusted fish-validator checkpoint is unavailable."""
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validation_weights_path() -> Path:
+    """Return the verified, local ImageNet MobileNetV2 checkpoint.
+
+    There is deliberately no ``weights='imagenet'`` fallback: that could make
+    startup depend on network access and obscures missing deployment assets.
+    """
+    path = MOBILENET_V2_WEIGHTS_PATH
+    if not path.is_file():
+        raise ValidationModelLoadError(
+            "Fish-validation weights are unavailable. Set CATFISH_MOBILENET_WEIGHTS_PATH "
+            "to the verified MobileNetV2 1.0/224 ImageNet checkpoint."
+        )
+    if _sha256(path) != MOBILENET_V2_WEIGHTS_SHA256:
+        raise ValidationModelLoadError("Fish-validation weights failed their SHA-256 integrity check.")
+    return path
+
+
+def imagenet_class_index() -> dict[str, list[str]]:
+    """Load the verified ImageNet class map without Keras' network fallback."""
+    path = IMAGENET_CLASS_INDEX_PATH
+    if not path.is_file():
+        raise ValidationModelLoadError(
+            "ImageNet class labels are unavailable. Set CATFISH_IMAGENET_CLASS_INDEX_PATH "
+            "to the verified ImageNet class-index JSON file."
+        )
+    if _sha256(path) != IMAGENET_CLASS_INDEX_SHA256:
+        raise ValidationModelLoadError("ImageNet class labels failed their SHA-256 integrity check.")
+    try:
+        labels = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValidationModelLoadError("ImageNet class labels could not be read.") from exc
+    if len(labels) != 1000 or any(str(index) not in labels for index in range(1000)):
+        raise ValidationModelLoadError("ImageNet class labels have an unexpected format.")
+    return labels
+
+
 @dataclass(frozen=True)
 class ValidationResult:
     """Structured outcome of file, quality, and fish-presence validation."""
@@ -48,16 +102,27 @@ class ValidationResult:
 
 @st.cache_resource(show_spinner=False)
 def load_validation_model():
-    """Load and cache the separate ImageNet fish validator."""
-    return MobileNetV2(weights="imagenet", include_top=True)
+    """Load and cache the separately supplied, verified ImageNet fish validator."""
+    try:
+        return MobileNetV2(weights=str(validation_weights_path()), include_top=True)
+    except ValidationModelLoadError:
+        raise
+    except Exception as exc:
+        raise ValidationModelLoadError("Fish-validation weights are incompatible with this TensorFlow/Keras runtime.") from exc
 
 
 def _classify(image: Image.Image, model) -> list[tuple[str, float]]:
     resized = image.resize(VALIDATOR_INPUT_SIZE, Image.Resampling.BILINEAR)
     batch = np.expand_dims(np.asarray(resized, dtype=np.float32), axis=0)
-    predictions = model.predict(preprocess_input(batch), verbose=0)
-    decoded = decode_predictions(predictions, top=VALIDATOR_TOP_K)[0]
-    return [(label.lower().replace(" ", "_"), float(score)) for _, label, score in decoded]
+    predictions = np.asarray(model.predict(preprocess_input(batch), verbose=0), dtype=float)
+    if predictions.shape != (1, 1000) or not np.all(np.isfinite(predictions)):
+        raise ValidationModelLoadError("Fish validator returned an invalid prediction response.")
+    labels = imagenet_class_index()
+    indexes = np.argsort(predictions[0])[-VALIDATOR_TOP_K:][::-1]
+    return [
+        (labels[str(int(index))][1].lower().replace(" ", "_"), float(predictions[0, index]))
+        for index in indexes
+    ]
 
 
 def interpret_labels(labels: list[tuple[str, float]]) -> ValidationResult:

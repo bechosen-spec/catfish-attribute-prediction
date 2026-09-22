@@ -1,0 +1,7 @@
+{
+  "mime_type": "application/vnd.google.colaboratory.intrinsic+json",
+  "value": {
+    "type": "dataframe",
+    "summary": "{\n  \"name\": \"dup\",\n  \"rows\": 3,\n  \"fields\": [\n    {\n      \"column\": \"class_name\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 3,\n        \"samples\": [\n          \"adult\",\n          \"fingerling\",\n          \"juvenile\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"images\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 24,\n        \"min\": 104,\n        \"max\": 147,\n        \"num_unique_values\": 3,\n        \"samples\": [\n          104,\n          106,\n          147\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"fish\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 8,\n        \"min\": 33,\n        \"max\": 49,\n        \"num_unique_values\": 3,\n        \"samples\": [\n          33,\n          35,\n          49\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
+  }
+}

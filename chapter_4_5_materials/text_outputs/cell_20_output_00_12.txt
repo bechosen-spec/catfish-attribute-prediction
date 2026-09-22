@@ -1,0 +1,33 @@
+
+===== effb0_ce =====
+Preprocessing: {'strategy': 'Keras EfficientNet internal Rescaling/Normalization', 'internal': True, 'input_range': '0..255'}
+Downloading data from https://storage.googleapis.com/keras-applications/efficientnetb0_notop.h5
+[1m16705208/16705208[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m2s[0m 0us/step
+Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 52ms/step - accuracy: 0.4903 - loss: 1.3640 — full validation: {'epoch': 1, 'val_accuracy': 0.803921568627451, 'val_balanced_accuracy': 0.7904761904761904, 'val_macro_f1': 0.8038950804908253, 'fingerling_recall': 0.8, 'juvenile_recall': 0.9047619047619048, 'adult_recall': 0.6666666666666666}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_ce_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m28s[0m 717ms/step - accuracy: 0.5944 - loss: 1.0774 - val_accuracy: 0.8039 - val_loss: 0.6495 - val_balanced_accuracy: 0.7905 - val_macro_f1: 0.8039 - fingerling_recall: 0.8000 - juvenile_recall: 0.9048 - adult_recall: 0.6667 - learning_rate: 3.0000e-04
+Epoch 2/2
+[1m15/16[0m [32m━━━━━━━━━━━━━━━━━━[0m[37m━━[0m [1m0s[0m 51ms/step - accuracy: 0.8214 - loss: 0.4665 — full validation: {'epoch': 2, 'val_accuracy': 0.8235294117647058, 'val_balanced_accuracy': 0.8063492063492063, 'val_macro_f1': 0.8248153962439676, 'fingerling_recall': 0.8, 'juvenile_recall': 0.9523809523809523, 'adult_recall': 0.6666666666666666}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_ce_frozen.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m3s[0m 140ms/step - accuracy: 0.8193 - loss: 0.4808 - val_accuracy: 0.8235 - val_loss: 0.5405 - val_balanced_accuracy: 0.8063 - val_macro_f1: 0.8248 - fingerling_recall: 0.8000 - juvenile_recall: 0.9524 - adult_recall: 0.6667 - learning_rate: 3.0000e-04
+Fine-tuning diagnostic: {
+  "backbone": "EfficientNetB0",
+  "representation": "nested",
+  "detected_backbone_layers": 238,
+  "frozen_backbone_layers": 191,
+  "unfrozen_backbone_layers": 47,
+  "first_unfrozen_layer": "block6b_expand_activation",
+  "last_unfrozen_layer": "top_activation",
+  "batchnorm_layers_frozen": 49,
+  "trainable_parameters": 2977987,
+  "non_trainable_parameters": 1405411
+}
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 62ms/step - accuracy: 0.8904 - loss: 0.4992 — full validation: {'epoch': 1, 'val_accuracy': 0.8627450980392157, 'val_balanced_accuracy': 0.8507936507936508, 'val_macro_f1': 0.8612836438923396, 'fingerling_recall': 0.8666666666666667, 'juvenile_recall': 0.9523809523809523, 'adult_recall': 0.7333333333333333}
+Saved new best macro-F1 checkpoint: /content/outputs/models/effb0_ce.keras
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m33s[0m 693ms/step - accuracy: 0.8675 - loss: 0.5079 - val_accuracy: 0.8627 - val_loss: 0.4818 - val_balanced_accuracy: 0.8508 - val_macro_f1: 0.8613 - fingerling_recall: 0.8667 - juvenile_recall: 0.9524 - adult_recall: 0.7333 - learning_rate: 1.0000e-05
+
+===== effb0_weights =====
+Preprocessing: {'strategy': 'Keras EfficientNet internal Rescaling/Normalization', 'internal': True, 'input_range': '0..255'}
+Epoch 1/2
+[1m16/16[0m [32m━━━━━━━━━━━━━━━━━━━━[0m[37m[0m [1m0s[0m 51ms/step - accuracy: 0.5679 - loss: 0.0415

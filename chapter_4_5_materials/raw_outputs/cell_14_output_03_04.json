@@ -1,0 +1,7 @@
+{
+  "mime_type": "application/vnd.google.colaboratory.intrinsic+json",
+  "value": {
+    "type": "dataframe",
+    "summary": "{\n  \"name\": \"print(\\\"PASS: zero fish overlap and zero exact duplicate hashes across splits\\\")\",\n  \"rows\": 8,\n  \"fields\": [\n    {\n      \"column\": \"SL_cm\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 19.157142095324584,\n        \"min\": 6.0,\n        \"max\": 51.0,\n        \"num_unique_values\": 8,\n        \"samples\": [\n          20.452941176470592,\n          11.0,\n          51.0\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"TL_cm\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 20.034835046530556,\n        \"min\": 7.4,\n        \"max\": 57.0,\n        \"num_unique_values\": 8,\n        \"samples\": [\n          23.088235294117652,\n          12.5,\n          51.0\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Weight_g\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 465.00052034058945,\n        \"min\": 2.9,\n        \"max\": 1250.0,\n        \"num_unique_values\": 8,\n        \"samples\": [\n          309.2294117647059,\n          15.7,\n          51.0\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
+  }
+}

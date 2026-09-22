@@ -1,0 +1,2 @@
+Raw image range: 0.0 255.0
+Augmented image range: -0.09173583984375 255.125

@@ -1,0 +1,1 @@
+PosixPath('/content/outputs/models/best_classification_model.keras')

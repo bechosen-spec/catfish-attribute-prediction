@@ -1,0 +1,1 @@
+Fingerling/juvenile overlap: {'SL_cm': (8.7, 7.5), 'TL_cm': (10.0, 8.8), 'Weight_g': (8.5, 5.4)}
