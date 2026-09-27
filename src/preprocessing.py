@@ -93,6 +93,11 @@ def quality_rejection_reason(quality: ImageQuality) -> str | None:
 
 
 def prepare_prediction_input(image: Image.Image) -> np.ndarray:
-    """Match the preprocessing used by the existing trained attribute model."""
-    resized = image.convert("RGB").resize(MODEL_INPUT_SIZE, Image.Resampling.BILINEAR)
-    return np.expand_dims(np.asarray(resized, dtype=np.float32) / 255.0, axis=0)
+    """Match EfficientNetB0 training: RGB, aspect-preserving resize-with-pad, 0..255."""
+    source = image.convert("RGB")
+    target_w, target_h = MODEL_INPUT_SIZE
+    scale = min(target_w / source.width, target_h / source.height)
+    resized = source.resize((round(source.width * scale), round(source.height * scale)), Image.Resampling.BILINEAR)
+    canvas = Image.new("RGB", MODEL_INPUT_SIZE)
+    canvas.paste(resized, ((target_w - resized.width) // 2, (target_h - resized.height) // 2))
+    return np.expand_dims(np.asarray(canvas, dtype=np.float32), axis=0)

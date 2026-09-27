@@ -9,7 +9,12 @@ DATA_DIR = Path(os.getenv("CATFISH_DATA_DIR", ROOT_DIR / "data"))
 SQLITE_DATABASE_PATH = DATA_DIR / "catfish.db"
 PRIVATE_IMAGE_DIR = DATA_DIR / "private_images"
 LOGO_PATH = ASSETS_DIR / "logo.jpeg"
-WEIGHTS_PATH = ROOT_DIR / "InceptionV3_best_model.weights.h5"
+ARTIFACT_DIR = Path(os.getenv("CATFISH_ARTIFACT_DIR", ROOT_DIR / "artifacts" / "efficientnetb0_multitask"))
+MODEL_PATH = ARTIFACT_DIR / "model.keras"
+CLASS_NAMES_PATH = ARTIFACT_DIR / "class_names.json"
+SCALERS_PATH = ARTIFACT_DIR / "biometric_scalers.json"
+PREPROCESSING_PATH = ARTIFACT_DIR / "preprocessing.json"
+MANIFEST_PATH = ARTIFACT_DIR / "manifest.json"
 
 APP_TITLE = "Catfish Attribute Estimator"
 MODEL_INPUT_SIZE = (224, 224)

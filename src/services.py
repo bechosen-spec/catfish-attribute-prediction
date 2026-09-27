@@ -7,13 +7,14 @@ from src.database import Experiment, ImageValidationResult, ModelVersion, Predic
 from src.config import PRIVATE_IMAGE_DIR
 from src.image_validator import validate_image
 from src.analysis import predict_if_valid
+from src.model import ModelLoadError
 
-MODEL_IDENTIFIER = "inceptionv3-multitask-supplied-weights"
+MODEL_IDENTIFIER = "efficientnetb0-multitask-v1"
 
 def _model_version(session):
     item = session.scalar(select(ModelVersion).where(ModelVersion.identifier == MODEL_IDENTIFIER))
     if not item:
-        item = ModelVersion(identifier=MODEL_IDENTIFIER, description="Supplied InceptionV3 multi-output weights; no independent deployment metrics available.")
+        item = ModelVersion(identifier=MODEL_IDENTIFIER, description="EfficientNetB0 shared-backbone multitask model: growth-stage classification and biometric regression.")
         session.add(item); session.flush()
     return item
 
@@ -31,6 +32,9 @@ def run_experiment(session, user_id, data, *, validator, load_model_fn, predict_
             store = PRIVATE_IMAGE_DIR; store.mkdir(parents=True, exist_ok=True)
             target = store / f"{uuid.uuid4().hex}.bin"; target.write_bytes(data); exp.image_path = str(target)
         exp.processing_ms = round((time.perf_counter()-started)*1000); session.flush(); return exp, validation, prediction
+    except ModelLoadError:
+        # Configuration failures must be explicit to the operator, never hidden as an inference result.
+        raise
     except Exception as exc:
         # Keep the failed experiment and its validation result; never invent outputs.
         exp.status = "FAILED"; exp.processing_ms = round((time.perf_counter()-started)*1000); session.flush()

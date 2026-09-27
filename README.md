@@ -76,9 +76,8 @@ checks that it is a usable image containing a likely fish, and then estimates:
 - total length in centimetres; and
 - weight in grams.
 
-The estimates come from the existing multi-output InceptionV3 model stored in
-`InceptionV3_best_model.weights.h5`. They are decision-support estimates, not a
-replacement for direct physical measurement.
+The estimates come from the deployed EfficientNetB0 multitask artefact bundle.
+They are decision-support estimates, not a replacement for direct physical measurement.
 
 ## Safety features
 
@@ -125,7 +124,7 @@ File and quality checks ──fail──▶ Explain rejection and stop
 MobileNetV2 fish check ──no/uncertain──▶ Explain rejection and stop
       │
       ▼
-Existing InceptionV3 attribute model
+EfficientNetB0 multitask attribute model
       │
       ▼
 Growth-stage probabilities + length and weight estimates
@@ -133,12 +132,9 @@ Growth-stage probabilities + length and weight estimates
 
 ## Model architecture
 
-The attribute model preserves the architecture expected by the supplied weights:
-
-- frozen ImageNet InceptionV3 feature extractor without its original top;
-- flattened features;
-- a 64-unit ReLU classification branch and three-class softmax output;
-- a separate 64-unit ReLU regression branch and three linear outputs.
+The attribute model has a frozen ImageNet EfficientNetB0 shared backbone,
+global-average pooling, batch normalization, dropout, a 192-unit Swish head,
+one three-class softmax head, and three separate scalar regression heads.
 
 The original preprocessing is preserved: RGB conversion, resize to 224 × 224,
 float conversion, division by 255, and a leading batch dimension. No inverse
@@ -160,8 +156,8 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The supplied InceptionV3 checkpoint is self-contained and does not require an
-ImageNet download. The independent MobileNetV2 fish validator uses the original
+The EfficientNetB0 deployment artefact is supplied separately as a verified
+bundle. The independent MobileNetV2 fish validator uses the original
 Keras ImageNet assets: the `1.0_224` top-classifier checkpoint and the ImageNet
 class-index JSON. If they are absent from the normal Keras cache, the app
 downloads them from the official TensorFlow/Keras URLs and verifies fixed
@@ -188,10 +184,11 @@ for inference.
 
 ## Run
 
-Ensure the trained file exists at the repository root:
+Ensure the complete verified artefact bundle exists:
 
 ```text
-InceptionV3_best_model.weights.h5
+artifacts/efficientnetb0_multitask/model.keras
+artifacts/efficientnetb0_multitask/manifest.json
 ```
 
 Then start the application:
@@ -215,19 +212,20 @@ pytest -q
 
 The suite covers valid/RGB image loading, bad files, small and blank images,
 blur rejection, fish/non-fish/uncertain label decisions, preprocessing shape,
-prediction output shapes, missing weights, and invalid physical outputs.
+prediction output shapes, missing/corrupt artefacts, scaler inverse transforms,
+and invalid physical outputs.
 
 ## Project structure
 
 ```text
 app.py                         Streamlit entry point
 assets/logo.jpeg               Existing application logo
-InceptionV3_best_model.weights.h5
+artifacts/efficientnetb0_multitask/  Deployed model and companion metadata
 src/config.py                  Paths and named thresholds
 src/analysis.py                Validation-first inference boundary
 src/preprocessing.py           Safe decoding, quality checks, preprocessing
 src/image_validator.py         Cached MobileNetV2 fish gate
-src/model.py                   Preserved attribute-model architecture/loading
+src/model.py                   EfficientNetB0 model architecture/loading
 src/prediction.py              Output validation and typed results
 src/ui.py                      Streamlit styling and presentation
 tests/                         Fast automated tests
@@ -246,3 +244,18 @@ miss small, obscured, unusual, or out-of-frame fish and may be influenced by the
 background. It cannot guarantee that an accepted fish is a catfish. The
 configured gates substantially reduce obvious non-fish predictions, but no
 automated validator is perfect.
+
+## Final EfficientNetB0 multitask model
+
+The active application model is a single shared-backbone **EfficientNetB0** multitask model. It accepts 224×224 RGB images, classifies Fingerling, Juvenile, and Adult, and independently emits scaled standard-length, total-length, and weight estimates. Its three regression heads are inverse-transformed with training-set scalers; weight uses `log1p` scaling. The model uses categorical cross-entropy for `class_output`, Huber losses for all biometric heads, and loss weights 1.00, 0.25, 0.25, and 0.50 respectively.
+
+Training is intentionally never performed by Streamlit. With the authorized dataset root containing class image folders and `fingerling.xlsx`, `juvenile.xlsx`, and `adult.xlsx`, run:
+
+```bash
+python -m scripts.train_efficientnet --dataset-root /path/to/dataset
+streamlit run app.py
+```
+
+Training writes a deployable `artifacts/efficientnetb0_multitask/` bundle: `model.keras`, SHA-256 manifest, class mapping, scalers, preprocessing configuration, fish-group split manifest, history, metrics, and test predictions. The model file is ignored by normal Git because it is a large binary; deploy the complete verified bundle using authorized storage. If it is absent or corrupt, the application shows a configuration error and does not train or fall back to InceptionV3.
+
+The split is deterministic, stratified by developmental stage, and grouped by fish identity (70/15/15). Image-level results are not independent-fish results. Image-only biometric estimates are decision support, affected by pose, camera distance, and background, and must be checked by direct measurement.
