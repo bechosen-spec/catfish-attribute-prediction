@@ -9,7 +9,7 @@ from src.auth import AuthError, authenticate, change_password, initialize_config
 from src.config import APP_TITLE, CLASS_CONFIDENCE_WARNING, LOGO_PATH
 from src.database import AdminAuditLog, DatabaseUnavailableError, Experiment, User, database_diagnostic, init_database, session_scope
 from src.image_validator import ValidationModelLoadError, load_validation_model
-from src.model import ModelLoadError, load_prediction_model
+from src.model import load_prediction_model
 from src.prediction import predict_attributes
 from src.services import admin_stats, run_experiment, user_experiments
 from src.runtime_secrets import read_secret
@@ -100,8 +100,6 @@ def predict(user):
                 if result: render_results(result,CLASS_CONFIDENCE_WARNING)
                 elif exp.status=="FAILED": st.error("Inference failed and was recorded without prediction values.")
             except ValidationModelLoadError as exc:
-                st.error(str(exc))
-            except ModelLoadError as exc:
                 st.error(str(exc))
 def history(user):
     st.header("Experiment history")

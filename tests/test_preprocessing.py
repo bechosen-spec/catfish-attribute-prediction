@@ -53,4 +53,4 @@ def test_prediction_preprocessing_shape_and_range():
     assert batch.shape == (1, 224, 224, 3)
     assert batch.dtype == np.float32
     assert batch.min() == 0.0
-    assert batch.max() == 255.0
+    assert batch.max() == 1.0

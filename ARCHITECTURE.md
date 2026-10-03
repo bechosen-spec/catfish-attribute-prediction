@@ -9,7 +9,3 @@ The prediction pipeline is deliberately unchanged: `src.preprocessing` validates
 Images are not retained unless the user explicitly selects retention. When selected, a randomly named file is written to `CATFISH_IMAGE_STORAGE` (default `data/private_images`), outside a public static directory; database rows hold only the path. Future image-serving code must authorize either the owner or an administrator before reading it.
 
 Alembic metadata is in `migrations/`; the initial migration is `0001_initial_schema`. Local first-run creation is also supported by `init_database()` for an easy standalone Streamlit experience.
-
-## EfficientNetB0 deployment model
-
-Active inference loads only `artifacts/efficientnetb0_multitask/model.keras` plus its JSON companion artefacts. `src.model.load_prediction_model` verifies the SHA-256 manifest and is cached with `st.cache_resource`; it never runs training. It rejects missing, corrupt, or incompatible artefacts with deployment instructions. The historical InceptionV3 checkpoint is not used by the application.

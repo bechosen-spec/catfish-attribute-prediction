@@ -36,4 +36,3 @@ build/
 *.dylib
 *.so
 *.dll
-artifacts/efficientnetb0_multitask/model.keras
