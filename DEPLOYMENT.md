@@ -7,7 +7,9 @@ Before release, provision:
 1. Python 3.9–3.12, TensorFlow 2.16, and dependencies from `requirements.txt`.
 2. No `CATFISH_DATABASE_URL` secret. Remove it from Streamlit Cloud Secrets if previously configured.
 3. The supplied `InceptionV3_best_model.weights.h5` file in the application root.
-4. The verified MobileNetV2 and ImageNet class-index assets, then set:
+4. Internet egress on first inference so the verified MobileNetV2 and ImageNet
+   class-index assets can be acquired from the official Keras/TensorFlow URLs.
+   Alternatively, pre-stage their verified copies and set:
 
    ```bash
    CATFISH_MOBILENET_WEIGHTS_PATH=/secure/models/mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.h5

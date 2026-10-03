@@ -30,17 +30,21 @@ def initialize_configured_admin(session, email: str | None, password: str | None
     if not email or not password:
         return AdminBootstrapResult("incomplete_configuration")
     normalized_email = email.strip().lower()
-    if not EMAIL_RE.fullmatch(normalized_email) or len(password) < 8:
-        return AdminBootstrapResult("invalid_configuration")
+    if not EMAIL_RE.fullmatch(normalized_email):
+        return AdminBootstrapResult("invalid_email")
+    if len(password) < 8:
+        return AdminBootstrapResult("weak_password")
 
     email_account = session.scalar(select(User).where(User.email == normalized_email))
     username_account = session.scalar(select(User).where(User.username == "admin"))
     if email_account is not None:
         if email_account.username == "admin" and email_account.role == "ADMIN":
             return AdminBootstrapResult("already_initialized")
-        return AdminBootstrapResult("account_conflict")
-    if username_account is not None or session.scalar(select(User).where(User.role == "ADMIN")):
-        return AdminBootstrapResult("account_conflict")
+        return AdminBootstrapResult("email_conflict")
+    if username_account is not None:
+        return AdminBootstrapResult("username_conflict")
+    if session.scalar(select(User).where(User.role == "ADMIN")):
+        return AdminBootstrapResult("administrator_conflict")
 
     create_initial_admin(session, password, normalized_email)
     return AdminBootstrapResult("created")

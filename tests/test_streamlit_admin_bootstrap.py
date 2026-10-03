@@ -11,6 +11,7 @@ from src.auth import (
     register,
 )
 from src.database import Base, User
+from src.runtime_secrets import read_secret
 
 
 def _session():
@@ -45,6 +46,26 @@ def test_configured_admin_is_created_once_and_can_log_in_after_password_change()
     assert session.query(User).filter_by(username="admin").one().password_hash != original_hash
 
 
+def test_streamlit_style_secrets_create_the_configured_admin(monkeypatch):
+    monkeypatch.delenv("CATFISH_ADMIN_EMAIL", raising=False)
+    monkeypatch.delenv("CATFISH_ADMIN_INITIAL_PASSWORD", raising=False)
+    secrets = {
+        "CATFISH_ADMIN_EMAIL": "cloud-admin@example.com",
+        "CATFISH_ADMIN_INITIAL_PASSWORD": "streamlit-strong-password",
+    }
+    session = _session()
+
+    result = initialize_configured_admin(
+        session,
+        read_secret("CATFISH_ADMIN_EMAIL", secrets),
+        read_secret("CATFISH_ADMIN_INITIAL_PASSWORD", secrets),
+    )
+    session.commit()
+
+    assert result.status == "created"
+    assert authenticate(session, "admin", "streamlit-strong-password").email == "cloud-admin@example.com"
+
+
 def test_bootstrap_never_promotes_or_overwrites_existing_user():
     session = _session()
     member = register(session, "Existing User", "member", "member@example.com", "strong-password", "strong-password")
@@ -54,7 +75,7 @@ def test_bootstrap_never_promotes_or_overwrites_existing_user():
     result = initialize_configured_admin(session, "member@example.com", "different-strong-password")
     session.commit()
 
-    assert result.status == "account_conflict"
+    assert result.status == "email_conflict"
     unchanged = session.get(User, member.id)
     assert unchanged.role == "USER"
     assert unchanged.password_hash == original_hash
@@ -65,5 +86,6 @@ def test_bootstrap_requires_complete_strong_configuration():
     session = _session()
     assert initialize_configured_admin(session, None, None).status == "not_configured"
     assert initialize_configured_admin(session, "admin@example.com", None).status == "incomplete_configuration"
-    assert initialize_configured_admin(session, "admin@example.com", "short").status == "invalid_configuration"
+    assert initialize_configured_admin(session, "invalid-email", "strong-password").status == "invalid_email"
+    assert initialize_configured_admin(session, "admin@example.com", "short").status == "weak_password"
     assert session.query(User).count() == 0

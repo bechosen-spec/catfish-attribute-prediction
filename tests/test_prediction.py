@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import src.model as model_module
+from src.config import WEIGHTS_PATH
 from src.model import ModelLoadError
 from src.prediction import PredictionError, parse_outputs
 
@@ -63,3 +64,10 @@ def test_missing_weight_file_is_reported(monkeypatch, tmp_path):
     monkeypatch.setattr(model_module, "WEIGHTS_PATH", Path(tmp_path / "missing.h5"))
     with pytest.raises(ModelLoadError, match="missing"):
         model_module.load_prediction_model()
+
+
+def test_deployment_contract_uses_the_supplied_inception_checkpoint():
+    """Prevent an unavailable research artefact from silently replacing app inference."""
+    assert WEIGHTS_PATH.name == "InceptionV3_best_model.weights.h5"
+    assert WEIGHTS_PATH.is_file()
+    assert not hasattr(model_module, "MODEL_PATH")

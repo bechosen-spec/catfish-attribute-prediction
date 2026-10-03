@@ -1,7 +1,7 @@
 """Database-backed Streamlit entry point; inference modules remain unchanged."""
 from __future__ import annotations
 import json
-import os
+import logging
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select
@@ -12,9 +12,11 @@ from src.image_validator import ValidationModelLoadError, load_validation_model
 from src.model import load_prediction_model
 from src.prediction import predict_attributes
 from src.services import admin_stats, run_experiment, user_experiments
+from src.runtime_secrets import read_secret
 from src.ui import apply_styles, render_disclaimer, render_footer, render_hero, render_preview, render_results, render_validation_details
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🐟", layout="wide", initial_sidebar_state="collapsed")
+logger = logging.getLogger(__name__)
 try:
     init_database()
 except DatabaseUnavailableError:
@@ -36,15 +38,25 @@ def bootstrap_configured_admin() -> None:
         with session_scope() as session:
             result = initialize_configured_admin(
                 session,
-                os.getenv("CATFISH_ADMIN_EMAIL"),
-                os.getenv("CATFISH_ADMIN_INITIAL_PASSWORD"),
+                read_secret("CATFISH_ADMIN_EMAIL", st.secrets),
+                read_secret("CATFISH_ADMIN_INITIAL_PASSWORD", st.secrets),
             )
-    except Exception:
-        # Never display or log secret values. Normal sign-up/sign-in still work.
+    except Exception as exc:
+        # Never include secret values, hashes, or exception text in the log/UI.
+        logger.warning("Administrator bootstrap failed: category=database_error exception=%s", type(exc).__name__)
         st.warning("The configured administrator could not be initialized. Existing accounts were left unchanged.")
         return
-    if result.status in {"incomplete_configuration", "invalid_configuration", "account_conflict"}:
-        st.warning("The configured administrator could not be initialized. Existing accounts were left unchanged.")
+    logger.info("Administrator bootstrap result: category=%s", result.status)
+    messages = {
+        "incomplete_configuration": "Administrator setup is incomplete. Configure both administrator secrets.",
+        "invalid_email": "Administrator setup has an invalid email configuration.",
+        "weak_password": "Administrator setup requires an initial password of at least 8 characters.",
+        "email_conflict": "Administrator setup conflicts with an existing account. Existing accounts were left unchanged.",
+        "username_conflict": "Administrator setup conflicts with an existing account. Existing accounts were left unchanged.",
+        "administrator_conflict": "An administrator already exists. Existing accounts were left unchanged.",
+    }
+    if result.status in messages:
+        st.warning(messages[result.status])
 
 
 bootstrap_configured_admin()

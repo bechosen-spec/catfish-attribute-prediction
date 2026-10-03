@@ -14,6 +14,7 @@ from tensorflow.keras.applications.mobilenet_v2 import (
     MobileNetV2,
     preprocess_input,
 )
+from tensorflow.keras.utils import get_file
 
 from src.config import (
     CONFIDENT_NON_FISH_THRESHOLD,
@@ -21,8 +22,15 @@ from src.config import (
     MIN_FISH_TOTAL_CONFIDENCE,
     MOBILENET_V2_WEIGHTS_PATH,
     MOBILENET_V2_WEIGHTS_SHA256,
+    MOBILENET_V2_WEIGHTS_FILENAME,
+    MOBILENET_V2_WEIGHTS_ORIGIN,
+    MOBILENET_V2_WEIGHTS_PATH_CONFIGURED,
     IMAGENET_CLASS_INDEX_PATH,
     IMAGENET_CLASS_INDEX_SHA256,
+    IMAGENET_CLASS_INDEX_FILENAME,
+    IMAGENET_CLASS_INDEX_ORIGIN,
+    IMAGENET_CLASS_INDEX_PATH_CONFIGURED,
+    MODEL_CACHE_DIR,
     VALIDATOR_INPUT_SIZE,
     VALIDATOR_TOP_K,
 )
@@ -52,33 +60,64 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validation_weights_path() -> Path:
-    """Return the verified, local ImageNet MobileNetV2 checkpoint.
-
-    There is deliberately no ``weights='imagenet'`` fallback: that could make
-    startup depend on network access and obscures missing deployment assets.
-    """
-    path = MOBILENET_V2_WEIGHTS_PATH
-    if not path.is_file():
-        raise ValidationModelLoadError(
-            "Fish-validation weights are unavailable. Set CATFISH_MOBILENET_WEIGHTS_PATH "
-            "to the verified MobileNetV2 1.0/224 ImageNet checkpoint."
+def _verified_asset(
+    path: Path,
+    *,
+    filename: str,
+    origin: str,
+    expected_sha256: str,
+    explicitly_configured: bool,
+    asset_name: str,
+) -> Path:
+    """Use a checked local asset or acquire the original Keras asset with a hash."""
+    if path.is_file():
+        if _sha256(path) != expected_sha256:
+            raise ValidationModelLoadError(f"{asset_name} failed its SHA-256 integrity check.")
+        return path
+    if explicitly_configured:
+        raise ValidationModelLoadError(f"{asset_name} are unavailable at the configured path.")
+    try:
+        downloaded = Path(
+            get_file(
+                filename,
+                origin,
+                file_hash=expected_sha256,
+                hash_algorithm="sha256",
+                cache_dir=str(MODEL_CACHE_DIR),
+                cache_subdir="models",
+            )
         )
-    if _sha256(path) != MOBILENET_V2_WEIGHTS_SHA256:
-        raise ValidationModelLoadError("Fish-validation weights failed their SHA-256 integrity check.")
-    return path
+    except Exception as exc:
+        raise ValidationModelLoadError(
+            f"{asset_name} could not be obtained from the official Keras asset source."
+        ) from exc
+    if not downloaded.is_file() or _sha256(downloaded) != expected_sha256:
+        raise ValidationModelLoadError(f"{asset_name} failed their SHA-256 integrity check.")
+    return downloaded
+
+
+def validation_weights_path() -> Path:
+    """Return the original MobileNetV2 1.0/224 checkpoint with SHA-256 verification."""
+    return _verified_asset(
+        MOBILENET_V2_WEIGHTS_PATH,
+        filename=MOBILENET_V2_WEIGHTS_FILENAME,
+        origin=MOBILENET_V2_WEIGHTS_ORIGIN,
+        expected_sha256=MOBILENET_V2_WEIGHTS_SHA256,
+        explicitly_configured=MOBILENET_V2_WEIGHTS_PATH_CONFIGURED,
+        asset_name="Fish-validation weights",
+    )
 
 
 def imagenet_class_index() -> dict[str, list[str]]:
     """Load the verified ImageNet class map without Keras' network fallback."""
-    path = IMAGENET_CLASS_INDEX_PATH
-    if not path.is_file():
-        raise ValidationModelLoadError(
-            "ImageNet class labels are unavailable. Set CATFISH_IMAGENET_CLASS_INDEX_PATH "
-            "to the verified ImageNet class-index JSON file."
-        )
-    if _sha256(path) != IMAGENET_CLASS_INDEX_SHA256:
-        raise ValidationModelLoadError("ImageNet class labels failed their SHA-256 integrity check.")
+    path = _verified_asset(
+        IMAGENET_CLASS_INDEX_PATH,
+        filename=IMAGENET_CLASS_INDEX_FILENAME,
+        origin=IMAGENET_CLASS_INDEX_ORIGIN,
+        expected_sha256=IMAGENET_CLASS_INDEX_SHA256,
+        explicitly_configured=IMAGENET_CLASS_INDEX_PATH_CONFIGURED,
+        asset_name="ImageNet class labels",
+    )
     try:
         labels = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
